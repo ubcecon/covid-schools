@@ -1,0 +1,166 @@
+---
+title       : "Causal impact of masks, policies, behavior on early COVID-19 pandemic in the U.S."
+subtitle    : "County Analysis"
+author      :  Victor Chernozhukov, Hiro Kasahara, Paul Schrimpf
+job         :
+date        : "`r format(Sys.time(), '%d %B, %Y')`"
+bibliography: "covid.bib"
+link-citations: true
+always_allow_html: true
+output      :
+    html_document :
+        toc : true
+        toc_depth : 3
+        toc_float : true
+        number_sections : true
+        #theme : journal
+        code_folding: hide
+        self_contained : true
+        fig_width: 8
+        fig_height: 6
+---
+
+```{r setup, include=FALSE, cache=TRUE}
+library(ggplot2)
+library(data.table)
+library(ggthemes)
+rootdir <- system("git rev-parse --show-toplevel", intern=TRUE)[1]
+source(paste(rootdir,"R/countyData.R",sep="/"))
+source(paste(rootdir,"R/varlabels.R", sep="/"))
+source(paste(rootdir,"R/dataprep.R",sep="/"))
+
+covidCounty <- countyData(FALSE)
+df <- dataprep(covidCounty)
+
+startdate  <- "2020-01-01"
+enddate <- as.Date(max(df$date,na.rm=TRUE))
+class(enddate) <- "Date"
+class(df$date) <- "Date"
+sdf <- subset(df, as.Date(df$date)>=as.Date(startdate) & as.Date(df$date)<=enddate)
+
+startdates <- c("start.Full in-person reopening available for all students",
+                "start.Remote learning only",
+                "start.Hybrid/Partial")
+for (v in startdates) {
+  sdf[,v] <- as.Date(sdf[,v])
+}
+enddates <- rep(NA, 3)
+pvars <- c("full", "remote", "hybrid")
+for(i in 1:length(startdates)) sdf[,pvars[i]] <-
+                                 smoothedpolicy(sdf,startdates[i],enddatevar=enddates[i],type="ma",bw=1, id="fips")
+haveschool=apply(sdf, 1, function(row) any(!is.na(row[startdates])))
+portionnames  <- sub("start","portion",startdates[grep("start\\.",startdates)])
+for (i in 1:length(pvars)) {
+  sdf[,pvars[i]] <- sdf[,pvars[i]]*sdf[,portionnames[i]]
+  sdf[!haveschool,pvars[i]] <- NA
+}
+```
+# Safegraph Data
+
+We process data from safegraph as follows:
+- From the Weekly Patterns data, extract all POIs whose "top category" is one of:
+    1. "Colleges, Universities, and Professional Schools",
+    2. "Elementary and Secondary Schools",
+    3. "Nursing Care Facilities (Skilled Nursing Facilities)",
+    4. "Continuing Care Retirement Communities and Assisted Living Facilities for the Elderly"
+    5. "Drinking Places (Alcoholic Beverages)"
+    6. "Restaurants and Other Eating Places"
+    7. "Fitness and Recreational Sports Centers"
+    8. "Religious Organizations" (these are mostly churches)
+- Extract daily device visits to each POI and aggregate visits to the county by category level
+- Also extract weekly devices residing in each county from the Home Panel data
+    - Note: the portion of all devices included in Safegraph varies
+      over time and place. Safegraph recommends normalizing visits by
+      devices residing to make changes comparable
+      overtime. Normalizing by devices in county is what Safegraph calls the [macro normalization approach](https://docs.google.com/presentation/d/1a7lmVtulPpvuH-TPgsR_t5WUQPdT28c_ymyx_Bcankk/edit#slide=id.g86ef4ba4cf_0_874). There is a more detailed
+      [micro normalization](https://colab.research.google.com/drive/16BELpcum4TKoH-5wg8Xym_CGgIGgpu1I?usp=sharing#scrollTo=B_dNARQFd50D)
+      that looks at monthly
+      visits to POI by the device's home census block group and normalize
+      relative to devices residing in each census block group. If
+      cross-county visits are rare or devices residing is highly
+      correlated across counties, then normalizing by devices residing
+      in the same county as a POI will give similar results.
+
+
+## Figures
+
+The following figures show devices residing and visits by category. Each black line is the evolution for a single county. Daily quantiles and means are shown by thicker colored lines. The y-axis is on a log-10 scale, but the mean is the mean of the level.
+
+```{r rawcounts, cache=TRUE, echo=FALSE}
+figtheme <- theme_hc
+plotcountycounts <- function(var, datevar="date", groupvar="fips", df=data.table(sdf),
+                             log10=TRUE) {
+  if (!("data.table" %in% class(df))) {
+    df <- data.table(df)
+  }
+  adf <- df[, list(mean = mean(get(var), na.rm=TRUE),
+                   q5 = quantile(get(var), 0.05, na.rm=TRUE),
+                   q50= quantile(get(var), 0.5, na.rm=TRUE),
+                   q95= quantile(get(var), 0.95, na.rm=TRUE)),
+            by=list(get(datevar))]
+  fig <- ggplot(data=data.frame(df),aes_string(x=datevar)) +
+    geom_line(aes_string(y=var, group=groupvar),alpha=0.1,colour="black") +
+    geom_line(data=adf,aes(x=get, y=mean, color="mean"), size=2) +
+    geom_line(data=adf,aes(x=get, y=q5, color="5%tile"), size=2) +
+    geom_line(data=adf,aes(x=get, y=q50, color="50%tile"), size=2) +
+    geom_line(data=adf,aes(x=get, y=q95, color="95%tile"), size=2) +
+    scale_x_date(date_breaks = "months" , date_labels = "%b") +
+    labs(color="") + xlab("") +
+    figtheme()
+  if (log10) {
+    fig  <-  fig + scale_y_log10()
+  }
+
+  return(fig)
+}
+
+print(plotcountycounts("devices_residing") + ggtitle("Devices Residing"))
+print(plotcountycounts("college_visits") + ggtitle("College/University Visits"))
+print(plotcountycounts("school_visits") + ggtitle("K-12 Visits"))
+print(plotcountycounts("nursing_visits") + ggtitle("Nursing Home Visits"))
+print(plotcountycounts("assistedliving_visits") + ggtitle("Retirement Community Visits"))
+print(plotcountycounts("church_visits") + ggtitle("Church Visits"))
+print(plotcountycounts("bar_visits") + ggtitle("Bar Visits"))
+print(plotcountycounts("restaurant_visits") + ggtitle("Restaurant Visits"))
+print(plotcountycounts("gym_visits") + ggtitle("Gym Visits"))
+
+```
+
+The next four figures show visits to a category divided by devices
+residing in a county.
+
+```{r relfigs, cache=TRUE, echo=FALSE}
+vars  <- c("college_visits","school_visits","nursing_visits","assistedliving_visits","gym_visits")
+titles <- c("College/University","K-12","Nursing Home","Retirement Community","Gyms")
+for (v in vars) {
+  sdf[,sub("visits","rel",v)] <- sdf[,v]/sdf$devices_residing
+  print(plotcountycounts(sub("visits","rel",v),log10=TRUE) + ggtitle(titles[vars==v]))
+}
+vars  <- c("college","school","bar","restaurant")
+titles <- c("College/University","K-12 Schools","Bar Visits","Restaurants Visits")
+for (v in vars) {
+  print(plotcountycounts(v,log10=FALSE) + ggtitle(titles[vars==v]))
+}
+
+```
+
+
+## Working
+
+Safegraph reports the number of devices that are completely at home,
+part-time working, and full-time working as part of their social
+distancing metrics data. The part-time and full-time working device
+counts are based on device location during daytime working hours. They
+likely understate the portion of people working. See
+[https://docs.safegraph.com/docs/social-distancing-metrics](https://docs.safegraph.com/docs/social-distancing-metrics)
+for more information.
+
+```{r working, cache=TRUE, echo=FALSE}
+print(plotcountycounts("device_count", log10=FALSE) + ggtitle("Device Count"))
+sdf$home_portion <- 100*sdf$completely_home_device_count/sdf$device_count
+sdf$full_time_portion <- 100*sdf$full_time_work_behavior_devices/sdf$device_count
+sdf$part_time_portion <- 100*sdf$part_time_work_behavior_devices/sdf$device_count
+print(plotcountycounts("home_portion", log10=FALSE) + ggtitle("% completely home"))
+print(plotcountycounts("full_time_portion", log10=FALSE) + ggtitle("% full-time work"))
+print(plotcountycounts("part_time_portion", log10=FALSE) + ggtitle("% part-time work"))
+```

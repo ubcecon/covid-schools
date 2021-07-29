@@ -1,0 +1,255 @@
+---
+title       : "Covid - County Analysis"
+subtitle    : "Regressions"
+author      :  Victor Chernozhukov, Hiro Kasahara, Paul Schrimpf
+job         :
+date        : "`r format(Sys.time(), '%d %B, %Y')`"
+bibliography: "covid.bib"
+link-citations: true
+always_allow_html: true
+output      :
+    html_document :
+        toc : true
+        toc_depth : 3
+        toc_float : true
+        number_sections : true
+        #theme : journal
+        code_folding: hide
+        self_contained : true
+        fig_width: 8
+        fig_height: 6
+---
+
+ <!-- To create html files from this, in R enter  -->
+ <!-- library(rmarkdown) -->
+ <!-- rmarkdown::render("regressionsWithPlots.Rmd") -->
+ <!-- To create tex files from this, in R enter ` -->
+ <!-- library(rmarkdown) -->
+ <!-- rmarkdown::render("regressionsWithPlots.Rmd", output_format=latex_fragment()) -->
+
+
+ <!-- to create the gh-pages hosted website in R enter -->
+ <!-- rmarkdown::render_site() -->
+
+ <!-- Then in a shell  -->
+ <!-- $ ghp-import -p -n -m "$(date)" _site -->
+
+
+# Data Preparation
+```{r setup, cache=FALSE, warning=FALSE, include=FALSE}
+library(latex2exp)
+library(ggplot2)
+library(data.table)
+library(ggthemes)
+
+figtheme <- theme_pander() #+ theme(plot.title=element_text(face="plain"))
+thm <-  theme(legend.text = element_text(size = 22),
+              title = element_text(size=22, face='bold'),legend.position = c(0.23, 0.83),
+              axis.text.x = element_text(size = 22, face='bold'),
+              axis.text.y = element_text(size = 22, face='bold'),
+              panel.grid.major = element_blank(),
+              panel.grid.minor = element_blank(),
+              panel.background = element_rect(fill = "transparent",colour = NA),
+              plot.background = element_rect(fill = "transparent",colour = NA))
+
+figtheme <- figtheme + thm
+
+colors <-  scale_color_gdocs
+fills <- scale_fill_gdocs
+
+rootdir <- system("git rev-parse --show-toplevel", intern=TRUE)[1]
+source(paste(rootdir,"R/countyData.R",sep="/"))
+source(paste(rootdir,"R/varlabels.R", sep="/"))
+
+cc <- countyData(FALSE)
+
+dt <- cdcCaseData()
+cols <-  c(names(dt)[grep("_yn", names(dt))],"current_status","race_ethnicity_combined","sex","age_group")
+dt[,(cols):=lapply(.SD, as.factor),.SDcols=cols]
+
+countyage <- dt[,list(cases=.N),
+                by=list(cdc_case_earliest_dt, county_fips_code, age_group)]
+countyage[order(county_fips_code, age_group, cdc_case_earliest_dt)]
+setkey(countyage, cdc_case_earliest_dt)
+countyage[, case_ma := frollmean(cases, 7), by=list(county_fips_code, age_group)]
+
+cc[,weekcases:=frollsum(newcases, 7), by=fips]
+cc[,weekcases_cdc:=frollsum(newcases_cdc, 7), by=fips]
+```
+
+# Comparing CDC and NYT Case Data
+
+An important caveat in the age based data is that it comes from CDC
+case reports. In this data, each case has a date reported to the CDC,
+a symptom onset date, and a positive specimen date. However, the
+symptom onset date and positive specimen date are missing for about
+half of the 8.5 million cases. The report data is always included. We
+use the CDC report date to compute total new cases by county, age
+group, and day. This leads to some discrepencies between cumulative
+case totals in the NYT data and those we compute from the CDC data.
+
+```{r cumulative, cache=TRUE}
+ggplot(cc, aes(x=cases,y=cases_cdc)) +
+  geom_point() +
+  xlab("Cumulative cases from NYT") +
+  ylab("Cumulative cases calculated from CDC") +
+  figtheme
+```
+
+The discrepencies look larger if we look at new cases each day.
+
+```{r daily, cache=TRUE}
+ggplot(cc, aes(x=newcases,y=newcases_cdc)) +
+  geom_point() +
+  xlab("New cases from NYT") +
+  ylab("New cases from CDC") +
+  figtheme
+```
+
+```{r weekly, cache=TRUE}
+ggplot(cc, aes(x=weekcases,y=weekcases_cdc)) +
+  geom_point() +
+  xlab("Cases in past week from NYT") +
+  ylab("Cases in past week from CDC") +
+  figtheme
+```
+
+# Cases by Age Group in Select Counties
+
+```{r countyage}
+library(ggplot2)
+library(tools)
+sizes <- rep(0.2, length(unique(dt$age_group)))
+sizes[1:3] <- 0.99
+names(sizes) <- levels(dt$age_group)
+
+dft <- data.table(cc)
+dft$date <- as.IDate(dft$date)
+setkey(dft,date)
+dft[, sv_ma := frollmean(school_visits, 7), by=fips]
+dft[, cv_ma := frollmean(college_visits, 7), by=fips]
+dft[, bv_ma := frollmean(bar_visits, 7), by=fips]
+dft[, gv_ma := frollmean(gym_visits, 7), by=fips]
+dft[, rv_ma := frollmean(restaurant_visits, 7), by=fips]
+dft[, wv_ma := frollmean(church_visits, 7), by=fips]
+mcols <- c("fips","date","school_visits","college_visits","bar_visits",
+           "gym_visits","restaurant_visits","church_visits",
+           "sv_ma","cv_ma","bv_ma",
+           "gv_ma","rv_ma","wv_ma",
+           "county","state","newcases_cdc","newcases","weekcases","weekcases_cdc")
+ctm <- merge(dft[,..mcols],countyage,
+             by.x=c("fips","date"),
+             by.y=c("county_fips_code","cdc_case_earliest_dt"),
+             all=TRUE)
+setkey(ctm, date)
+
+lbls <- c("school","college","bar","gym","restaurant","church")
+countyplot <- function(ct, st, fip=unique(ctm[county==ct & state==st]$fips),
+                       daterange=c(as.Date("2020-07-01"),as.Date("2020-12-13"))
+                       ) {
+  tmp  <- melt(ctm[fips==fip],
+               c("fips","age_group","date"),
+               #names(ctm)[grep("_ma",names(ctm))])
+               "case_ma")
+  tmp <- tmp[!is.na(tmp$age_group)]
+  tmp <- tmp[date>as.Date("2020-04-01")]
+  #lbls  <-  c("cases","school visits","college vistis", "bar visits")
+  #names(lbls)  <-  levels(tmp$variable)
+  fig <- list()
+  fig[[1]] <- ggplot(tmp, aes(x=date, y=value, colour=age_group, alpha=age_group)) +
+    xlab("Date") +
+    ylab("7 day moving average of cases") +
+    xlim(daterange) +
+    geom_line(size=1.5) +
+    scale_alpha_manual(values=sizes) +
+    figtheme +
+    theme(legend.position = "none") +
+    colors() + fills() +
+    geom_label(aes(x=date, y=value, label=age_group,
+                   colour=age_group),
+               #colour="white",
+               #alpha=0.5,
+               data=tmp[date=="2020-11-15"],
+               ) +
+    ggtitle(sprintf("%s - %s",st,ct))
+  vars <- c("sv_ma","cv_ma","bv_ma","gv_ma","rv_ma","wv_ma")
+  tmp  <- ctm[fips==fip & date>=daterange[1]]
+  for(i in 1:length(vars)) {
+    fig[[i+1]] <- ggplot(tmp, aes_string(x="date",
+                                         y=vars[i])) +
+      xlab("Date") +
+      ylab(sprintf("7 day moving average of %s visits",lbls[i])) +
+      geom_line(size=1.5) +
+      xlim(daterange) +
+      figtheme +
+      colors() +
+      ggtitle(sprintf("%s visits in %s - %s county",toTitleCase(lbls[i]),st,ct))
+  }
+  fig[[i+1]] <- ggplot(dft[fips==fip], aes(x=date, y=weekcases/7, colour="NYT")) +
+    geom_line(size=1.5) +
+    geom_line(size=1.5,aes(y=weekcases_cdc/7, colour="CDC")) +
+    ggtitle(sprintf("Comparison of cases in NYT and CDC data in %s - %s",st,ct)) +
+    ylab("7 day moving average of new cases") +
+    xlim(daterange) + figtheme + colors()
+  return(fig)
+}
+
+c <- "Dane"
+s <- "Wisconsin"
+
+savecountyfigs <- function(figs,c,s, width=8,height=6) {
+  pdf(sprintf("casesByAge%s%s.pdf",s,c), width=width,height=height)
+  print(figs[[1]])
+  dev.off()
+
+  for (i in 1:length(lbls)) {
+    pdf(sprintf("%s%s%s.pdf",lbls[i],s,c), width=width,height=height)
+    print(figs[[i+1]])
+    dev.off()
+  }
+}
+
+figs <- countyplot(c,s)
+wd <- getwd()
+figuredir <- paste(rootdir,"tex/tables_and_figures/county",sep="/")
+if (!dir.exists(figuredir)) dir.create(figuredir)
+setwd(figuredir)
+savecountyfigs(figs, c, s)
+setwd(wd)
+
+print(figs[[7]])
+print(figs[[1]])
+library(patchwork)
+print(wrap_plots(figs[2:3], ncol=1))
+print(wrap_plots(figs[4:6], ncol=1))
+```
+
+```{r counties}
+# some counties with large universities
+places <- list(c("Centre","Pennsylvania"),
+               c("Pima", "Arizona"),
+               c("Alachua","Florida"),
+               c("Champaign","Illinois"),
+               c("Allen","Indiana"),
+               c("Story","Iowa"),
+               c("Ingham","Michigan"),
+               c("Lafayette","Mississippi"),
+               c("Missoula","Montana"),
+               c("Lane","Oregon"),
+               c("Greenville","South Carolina"))
+
+for (cs in places)  {
+  c <- cs[1]
+  s <- cs[2]
+  cat(s,"\n")
+  figs <- countyplot(c,s)
+  print(figs[[7]])
+  print(figs[[1]])
+
+  print(wrap_plots(figs[2:3], ncol=1))
+  print(wrap_plots(figs[4:6], ncol=1))
+  setwd(figuredir)
+  savecountyfigs(figs, c, s)
+  setwd(wd)
+}
+```

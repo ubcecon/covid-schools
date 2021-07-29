@@ -1,0 +1,36 @@
+---
+title       : "Covid - County Analysis"
+subtitle    : "Data"
+author      :  Victor Chernozhukov, Hiro Kasahara, Paul Schrimpf
+job         :
+date        : "`r format(Sys.time(), '%d %B, %Y')`"
+bibliography: "covid.bib"
+link-citations: true
+always_allow_html: true
+output      :
+    html_document :
+        toc : true
+        toc_depth : 3
+        toc_float : true
+        number_sections : true
+        #theme : journal
+        code_folding: hide
+        self_contained : true
+        fig_width: 8
+        fig_height: 6
+---
+
+# Sources
+
+- Daily cases and deaths from NYT
+- County mask mandates from [Wright, Chawla, Chen, & Farmer](https://www.austinlwright.com/covid-research) [@wright2020]
+- Information on other policies from [Yu group](https://github.com/Yu-Group/covid19-severity-prediction)  ([@altieri2020]).
+- School district reopening from [edweek](https://www.edweek.org/ew/section/multimedia/school-districts-reopening-plans-a-snapshot.html)
+- Matching between school districts and counties from [census](https://www2.census.gov/programs-surveys/saipe/guidance-geographies/districts-counties/sdlist-19.xls)
+
+
+# Code
+
+- `R/countyData.R` downloads and merges the data sources above
+- `R/dataprep.R` does some additional variable creation and cleaning
+  in preparation for analysis

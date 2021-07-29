@@ -1,0 +1,583 @@
+\documentclass[9pt,twocolumn,twoside,lineno]{pnas-new}
+% Use the lineno option to display guide line numbers if required.
+
+\usepackage{graphicx} %Loading the package
+\graphicspath{{tables_and_figures/}}
+
+\templatetype{pnasresearcharticle} % Choose template
+% {pnasresearcharticle} = Template for a two-column research article
+% {pnasmathematics} %= Template for a one-column mathematics article
+% {pnasinvited} %= Template for a PNAS invited submission
+
+
+\providecommand{\Infected}{{\mathcal{I}}}
+\providecommand{\Recovered}{{R}}
+
+\usepackage{CJKutf8}
+
+
+\title{The Association of Opening K-12 Schools with the Spread of COVID-19 in the United States: County-Level Panel Data Analysis}
+
+% Use letters for affiliations, numbers to show equal authorship (if applicable) and to indicate the corresponding author
+\author[a,1]{Victor Chernozhukov}
+\author[b,2]{Hiroyuki Kasahara }
+%\author[b,2]{Hiroyuki Kasahara \begin{CJK}{UTF8}{goth}(笠原博幸)\end{CJK}}
+\author[b]{Paul Schrimpf}
+
+\affil[a]{Department of Economics and Center for Statistics and Data Science, MIT}
+\affil[b]{Vancouver School of Economics, University of British Columbia}
+%\affil[c]{UBC}
+
+% Please give the surname of the lead author for the running footer
+\leadauthor{Chernozhukov}
+
+% Please add a significance statement to explain the relevance of your work
+\significancestatement{The paper examines whether the opening of K-12 schools  may lead to the spread of COVID-19. Analyzing how an increase of COVID-19 cases is related to the timing of opening K-12 schools across different counties in the United States, we find that counties that opened K-12 schools with in-person learning experienced an increase in the growth rate of cases by 5 percentage points on average, controlling for a variety of dynamically evolving policies, past infection rates, and other factors. This association of K-12 school visits with case growth is stronger when mask-wearing is not mandated for staff at school.  These findings support policies that promote masking and other precautionary measures at schools and giving vaccine priority to education workers.
+}
+% Please include corresponding author, author contribution and author declaration information
+%\authorcontributions{Please provide details of author contributions here.}
+% \authordeclaration{Please declare any competing interests here.}
+\equalauthors{\textsuperscript{1}All three authors contributed equally to this work.}
+\correspondingauthor{\textsuperscript{2}Corresponding author. E-mail: hkasahar@mail.ubc.ca}
+
+% At least three keywords are required at submission. Please provide three to five keywords, separated by the pipe symbol.
+\keywords{K-12 school openings $|$ in-person, hybrid, and remote $|$ mask-wearing requirements for staff $|$  foot traffic data $|$ debiased estimator}
+
+\begin{abstract}
+This paper empirically examines how the opening of K-12 schools  is associated with the spread of COVID-19 using county-level panel data in the United States.  As preliminary evidence, our event-study analysis indicates that cases and deaths in counties with in-person or hybrid opening relative to those with remote opening substantially increased after the school opening date, especially for counties without any mask mandate for staff. Our main analysis uses a dynamic panel data model for case and death growth rates, where we control for dynamically evolving mitigation policies, past infection levels, and additive county-level and state-week "fixed" effects. This analysis shows that an increase in visits to both K-12 schools and colleges is associated with a subsequent increase in case and death growth rates. The estimates indicate that fully opening K-12 schools with in-person learning is associated with a 5 (SE = 2) percentage points increase in the growth rate of cases.  We also find that the association of K-12 school visits or in-person school openings with case growth is stronger for counties that do not require staff to wear masks at schools.  These findings support policies that promote masking and other precautionary measures at schools and giving vaccine priority to education workers.    
+\end{abstract}
+
+\dates{This manuscript was compiled on \today}
+\doi{\url{www.pnas.org/cgi/doi/10.1073/pnas.XXXXXXXXXX}}
+
+\begin{document}
+
+\maketitle
+\thispagestyle{firststyle}
+\ifthenelse{\boolean{shortarticle}}{\ifthenelse{\boolean{singlecolumn}}{\abscontentformatted}{\abscontent}}{}
+\dropcap{Does} opening K-12 schools lead to the spread of COVID-19? Do mitigation strategies such as mask-wearing requirements help reduce the transmission of SARS-CoV-2  at school?  These are important policy relevant questions  in countries with low vaccination rates, especially given the emerging variants of concerns with higher transmission rates. If in-person school openings substantially increase  COVID-19 cases, then local governments could promote mitigation measures at schools (universal and proper masking, social distancing, and handwashing) to lower the risk of COVID-19 spread. %The local government could even consider the possibility of switching from in-person to hybrid or remote learning mode in the event of widespread community transmissions of SARS-CoV-2.
+Furthermore, the governments could prioritize vaccines for education workers and elderly parents in case of in-person school openings.  This paper uses county-level panel data on K-12 school opening plans and mitigation strategies together with foot traffic data to investigate how an increase in visits to K-12 schools is associated with a subsequent increase in COVID-19 cases in the United States.
+
+\section*{Data} We begin with describing our data and provide descriptive evidence. Our sample period is from  April 1, 2020, to December 2, 2020.
+Our analysis uses county-level panel data in the United States. As outcome variables, we use weekly cases and deaths as well as their growth rates. The main explanatory variables of interest are school openings with different teaching methods and mitigation measures from MCH Strategic Data and per-device visits to K-12 schools from SafeGraph foot traffic data. We also use the foot traffic data on stay-at-home devices and visits to full-time/part-time workplaces, colleges/universities, restaurants, bars, recreational facilities,  and churches. Our panel regression analysis uses additional data on non-pharmaceutical policy interventions (NPIs) and the number of tests.
+
+The data on cases and deaths for each county are from the \href{https://raw.githubusercontent.com/nytimes/covid-19-data/master/us-counties.csv}{New York Times}.  \href{https://www.safegraph.com}{SafeGraph} provides foot traffic data based on a panel of GPS pings from anonymous mobile devices. Per-device visits to K-12 schools, colleges/universities, restaurants, bars, recreational places, and churches are constructed from the ratio of
+daily device visits to these point-of-interest locations to the number of devices residing in each county. Full-time and part-time workplace visits are the ratio of the number of devices that spent more than 6 hours and between 3 to 6 hours, respectively, at one location other than one's home location to the total number of device counts. The staying home device variable is the ratio of the number of devices that do not leave home locations to the total number of device counts.
+
+ \href{https://www.mchdata.com}{MCH Strategic Data} provides information on the date of school openings with different teaching methods (in-person, hybrid, and remote) as well as mitigation strategies at 14703 school districts. We link school district-level MCH data to the county-level data from NYT and SafeGraph using the \href{https://www2.census.gov/programs-surveys/saipe/guidance-geographies/districts-counties/sdlist-20.xls}{file} for School Districts and Associated Counties from the US Census Bureau. School district data is aggregated up to county-level using the enrollment of students at each district. Specifically, we construct the proportion of students with different teaching methods for each county-day observation using the district-level information on school opening dates and teaching methods. We define each teaching method's county-level school opening date by the weighted mean of district-level school opening dates of the corresponding teaching method with enrollment weights. We also construct a county-level dummy variable of ``No mask requirement for staff,'' which takes a value of 1 if there exists at least one school district with no mask requirement. The measure of mask requirements for staff is highly correlated with other mitigation measures, including mask requirements for students, prohibiting sports activities, and online instruction increases as shown in SI Appendix, Table S3.\footnote{MCH Strategic Data provides the school district level data on whether each school district adopts following mitigation strategies: (i) mask requirements for staff, (ii) mask requirements for students, (iii) prohibiting sports activities, and (iv) online instruction increases, among other measures.  We decided to use mask requirements for staff as the primary variable for school mitigation strategy because it has a lower number of missing values than other mitigation measures.}
+ A substantial fraction of school districts report ``unknown'' or ``pending''  for teaching methods and mask requirements. We drop county observations from the sample if more than 50 percent of students attend school districts that report unknown or pending teaching methods or mask requirements for panel regression analysis with teaching methods or mask requirements.
+   
+Our empirical analysis uses 7-day moving averages of daily variables to deal with periodic fluctuations within a week. SI Appendix, Fig. S4  shows the evolution of percentiles of these variables over time, while  Tables S1-S2 present descriptive statistics and correlation matrix across variables we use for our regression analysis.
+The data set contains the maximum of 3144 counties for regression analysis using foot traffic data but some observations are dropped out of samples due to missing values for school opening teaching methods and staff mask requirements in some specifications.\footnote{Our regression analysis uses 2788 counties for specification with K-12 school opening with different teaching modes, while the sample contains 2204 counties for specification with mask requirements for staff.}  The analysis was conducted using R software (version 4.0.3).
+ 
+\begin{table}[ht]  
+\caption{Summary Statistics \label{table:summary}}\vspace{-0.25cm}
+\hspace{-0.1cm}\resizebox{0.58\columnwidth}{!}{
+\begin{minipage}{\linewidth} 
+\begin{tabular}{@{\extracolsep{5pt}}lccccccc}
+\\[-1.8ex]\hline
+\hline \\
+  & Wkly Case  & Wkly Death  & Wkly Cases & Wkly Deaths & K-12 Sch. & Workplace   & Restaurant  \\
+  &  Growth &  Growth & per 1000 & per 1000 &  Visits &  Visits & Visits \\ \hline
+\textbf{In-person} \\
+ \qquad Before Opening \\
+\qquad\quad Mean & 0.091 & 0.013 & 0.571 & 0.060 & 0.045 & 0.047 & 0.185 \\
+   & (0.011) & (0.003) & (0.031) & (0.003) & (0.002) & (0.001) & (0.007) \\
+ \qquad\quad N & 52258 & 52258 & 54995 & 54995 & 67070 & 67070 & 67070 \\
+\qquad After Opening \\
+\qquad\quad Mean & 0.143 & 0.034 & 3.038 & 0.104 & 0.161 & 0.073 & 0.188 \\
+   & (0.014) & (0.006) & (0.200) & (0.005) & (0.005) & (0.001) & (0.006) \\
+ \qquad\quad N & 45749 & 45749 & 45827 & 45827 & 46030 & 46030 & 46030 \\ \hline
+\quad Difference in Means & 0.052 & 0.021 & 2.467 & 0.044 & 0.116 & 0.026 & 0.003 \\
+   & (0.018) & (0.007) & (0.203) & (0.004) & (0.004) & (0.001) & (0.004) \\ \hline\hline
+ \textbf{Hybrid} \\
+ \qquad Before Opening \\
+\qquad\quad Mean & 0.096 & 0.024 & 0.664 & 0.035 & 0.036 & 0.045 & 0.242 \\
+   & (0.012) & (0.006) & (0.031) & (0.001) & (0.001) & (0.0004) & (0.005) \\
+ \qquad\quad N & 234820 & 234820 & 243321 & 243321 & 260573 & 260551 & 260573 \\
+\qquad After Opening \\
+\qquad\quad Mean & 0.121 & 0.042 & 2.368 & 0.057 & 0.126 & 0.064 & 0.249 \\
+   & (0.012) & (0.006) & (0.132) & (0.002) & (0.003) & (0.001) & (0.004) \\
+ \qquad\quad N & 166605 & 166605 & 166660 & 166660 & 167206 & 167206 & 167206 \\\hline
+ \quad Difference in Means & 0.025 & 0.019 & 1.703 & 0.022 & 0.090 & 0.019 & 0.007 \\
+   & (0.016) & (0.008) & (0.136) & (0.002) & (0.003) & (0.001) & (0.004) \\ \hline\hline
+ \textbf{Remote} \\
+ \qquad Before Opening \\
+\qquad\quad Mean & 0.099 & 0.035 & 0.742 & 0.032 & 0.032 & 0.045 & 0.278 \\
+   & (0.012) & (0.008) & (0.035) & (0.002) & (0.001) & (0.0004) & (0.008) \\
+ \qquad\quad N & 76796 & 76796 & 78581 & 78581 & 82165 & 82165 & 82165 \\
+\qquad After Opening \\
+\qquad\quad Mean & 0.103 & 0.033 & 1.944 & 0.047 & 0.088 & 0.058 & 0.287 \\
+   & (0.012) & (0.009) & (0.115) & (0.003) & (0.003) & (0.001) & (0.007) \\
+ \qquad\quad N & 50127 & 50127 & 50048 & 50048 & 50183 & 50183 & 50183 \\\hline
+\quad \ Difference in Means & 0.004 & -0.002 & 1.202 & 0.015 & 0.056 & 0.013 & 0.009 \\
+   & (0.017) & (0.012) & (0.120) & (0.002) & (0.003) & (0.001) & (0.006) \\  \hline\hline \\[-1.8ex]
+\end{tabular}
+ \end{minipage}} 
+\vspace{-0.2cm}  {\scriptsize
+\begin{flushleft}
+Notes:  Based on observations from April 15, 2020 to December 2, 2020. Standard errors that are two-way clustered on county and date are reported in parentheses. 
+ \end{flushleft}} 
+\end{table}
+
+\begin{figure*}[ht]
+  \caption{The evolution of  cases, deaths, and visits to K-12 schools and restaurants before and after the opening of K-12 schools\label{fig:case-growth}}
+\resizebox{0.93\columnwidth}{!}{
+\begin{minipage}{0.7\linewidth}
+        \begin{tabular}{cc}
+%  \huge  \textbf{(a) Weekly Cases by K-12 Opening Modes }  & \huge \textbf{(b) Weekly Deaths by  K-12 Opening Modes} \\
+ \qquad \qquad \qquad   \includegraphics[width=0.85\textwidth]{schoolmode-event-staff-newcases}&
+ \qquad \qquad   \qquad  \includegraphics[width=0.85\textwidth]{schoolmode-event-staff-newdeaths}\\
+  & \\
+    \huge  \textbf{(c) Weekly K-12 School Visits } &   \huge  \textbf{(d) Weekly Full-Time Workplace Visits}\\
+ \qquad \qquad \qquad\includegraphics[width=0.85\textwidth]{schoolmode-event-school}&
+\qquad  \qquad \qquad\includegraphics[width=0.85\textwidth]{schoolmode-event-fullwork}
+    \end{tabular}
+  \end{minipage}}
+\vspace{-0.2cm}  {\scriptsize
+\begin{flushleft}
+Notes:  (a)-(b) plot the evolution of weekly cases or deaths per 1000 persons averaged across counties within each group of counties classified by K-12 school teaching methods and mitigation strategy of mask requirements against the days since K-12 school opening. We classify counties that implement in-person teaching as their dominant teaching method into ``In-person/Yes-Mask'' and  ``In-person/No-Mask'' based on whether at least one school district requires staff to wear masks or not. Similarly, we classify counties that implement hybrid teaching into ``Hybrid/Yes-Mask'' and  ``Hybrid/No-Mask'' based on whether mask-wearing is required for staff. We classify counties that implement remote teaching as ``Remote.''   (c) and (d) plot the evolution of the 7-day average of per-device visits to K-12 schools and full-time workplaces, respectively, against the days since K-12 school opening using the same classification as (a) and (b).
+ \end{flushleft}}
+\end{figure*}
+
+Table \ref{table:summary} reports the means for the growth rate of weekly confirmed cases and deaths measured by the log-difference over 7 days in reported weekly cases/deaths, where the log of weekly cases and deaths is set to be $-1$ when we observe zero weekly cases and deaths, weekly cases and deaths per 1000, and per-device visits to K-12 schools, workplaces, and restaurants by teaching methods and separately for periods before and after K-12 school openings. Standard errors for the means that are two-way clustered on county and date are reported in parentheses. Here and in the event-study analysis, we classify counties into three groups (in-person, hybrid, and remote) by the dominant teaching method under which the highest proportion of students are learning within a county.
+
+The school opening dates spread from the beginning of August to late September across counties, where
+hybrid teaching  is more common than remote or in-person teaching (SI Appendix, Fig. S4(k)).  Reflecting the steady increase in cases from late September to November of 2020 in the U.S. (SI Appendix, Fig. S4(b)),  the growth rates of cases and deaths, as well as the number of weekly confirmed cases and deaths, are higher in the period after the school opening compared to the period before. As shown in Table \ref{table:summary}, this rise in cases and deaths after the school opening is more pronounced in the counties with in-person or hybrid teaching than those with remote teaching.  K-12 school and workplace visits are also higher after the school openings than before, especially for counties with in-person and hybrid school openings. On the other hand, mean per-device restaurant visits do not change much before and after the school opening, regardless of teaching methods.
+
+ Fig.  \ref{fig:case-growth} provides visual evidence for the association of opening K-12 schools with the spread of COVID-19 as well as the role of school mitigation strategies. Fig.  \ref{fig:case-growth}(a) and (b) plot the evolution of average weekly cases and deaths per 1000 persons, respectively, against days since school opening for different teaching methods and mask requirements for staff. In Fig.  \ref{fig:case-growth}(a), the average number of weekly cases starts increasing after two weeks of opening schools in-person or hybrid for counties with no mask mandates for staff, possibly suggesting that mask mandates at school reduce the transmissions of SARS-CoV-2. In Fig.  \ref{fig:case-growth}(b), the number of deaths starts rapidly increasing after 3 to 5 weeks of opening schools for counties that adopt in-person/hybrid teaching methods with no mask mandates.  Alternative mitigation strategies of requiring mask-wearing to the student, prohibiting sports activities, and promoting online instruction also appear to help reduce the number of cases after school openings (see SI Appendix, Fig.  S5(i)-(p)).
+
+Fig.  \ref{fig:case-growth}(c) shows that opening K-12 schools in-person or hybrid increases the 7-day averages of per-device visits to K-12 schools more than opening remotely, especially when no mask mandates are in place.  Fig.  \ref{fig:case-growth}(d) and SI Appendix, Fig.  S5(e)-(f) show that visits to full-time and part-time workplaces increase after school openings with in-person teaching, suggesting that the opening of schools allow parents to return to work.\footnote{Although the workplace visits appear to start increasing before school opens in Fig.  \ref{fig:case-growth}(d), this reflects a measurement error about school opening dates as well as the use of the 7-day average visits. SI Appendix, Fig. S6(d)  shows that a sharp increase in the daily visits to workplaces only happens on the day of school openings without any increase before for a subset of counties such that the school opening date is the same across all school districts within a county. } On the other hand, we observe no drastic changes in per-device visits to restaurants, recreational facilities, and churches after school openings (SI Appendix, Fig.  S5(b)-(d)).
+ 
+\section*{A Preliminary Event-Study Analysis}
+
+As a matter of preliminary data analysis, we further investigate how cases and deaths change over time after school openings by an ``event-study'' analysis \citep[e.g.,][]{Callaway2020,Goodman-Bacon2018,Sun2020}. We divide the sample into three subsamples, where each subsample contains the observation with similar school opening dates. Then,  for each of the subsamples, we run the following regression with weekly dummies of leads and lags for three school opening modes (i.e., in-person, hybrid, and remote) with county fixed effects but without time fixed effects:
+\begin{equation}\label{eq:event}
+Y_{it} = \sum_{p\in\mathcal{P}}\sum_{w=-8}^{22} \gamma_w^p D_{\tau,it}^p   + \alpha_i +\epsilon_{it},
+\end{equation}
+where   $Y_{it}$ is the number of  weekly confirmed cases/deaths per 1000, $D_{\tau,it}^p$ takes the value equal to 1 if school has been opened  for $\tau$ weeks (or will be opened after $-\tau$ weeks if $\tau<0$) with teaching method $p\in \mathcal{P}:= \{\text{in-person},\text{hybrid},\text{remote}\}$  in county $i$ at day $t$.  The  $\alpha_i$ represents a county-specific baseline mean from the beginning of the sample to the nine weeks before the school opening.  We consider the event window of 8 weeks before the school opening and a maximum of 22 weeks after the school opening, where the lag windows are different across subsamples given that our sample ends on December 2, 2020.
+
+Figure \ref{fig:event} graphs the estimated coefficients over time with 95 percent confidence intervals with standard errors clustered by counties:  the first subsample uses county observations that opened schools before  Aug 23, 2020, the second consists of the counties that opened schools between Aug 24 and Sept 6, and the third uses the counties with school opening dates after Sept 7, 2020.   The results illustrate that the gap in weekly cases/deaths per 1000 between remote opening and full/hybrid opening grow overtime after the school opening date for all three subsamples. % There is no clear violation of parallel trend   in the pre-treatment period.
+
+  \begin{figure}[!ht]
+  \caption{The event-study regression estimates before and after the school opening\label{fig:event}}\vspace{-0.1cm}
+\hspace*{-0.5cm}  \resizebox{0.75\columnwidth}{!}{
+\begin{minipage}{\linewidth}  \centering
+        \begin{tabular}{cc}
+%\textbf{\large (a)  Cases by Opening Modes}&\textbf{\large (b)  Deaths by Opening Modes}\smallskip\\ %&\textbf{(c) K-12 Visits by Opening Modes}\smallskip\\
+ \includegraphics[width=0.66\textwidth]{event_cases_trend_1.pdf}&
+ \includegraphics[width=0.66\textwidth]{event_deaths_trend_1.pdf}\smallskip\\%&
+ %\includegraphics[width=0.66\textwidth]{event_school_trend_1.pdf}\smallskip\\
+  \includegraphics[width=0.66\textwidth]{event_cases_trend_2.pdf}&
+  \includegraphics[width=0.66\textwidth]{event_deaths_trend_2.pdf}\smallskip\\%&
+ %\includegraphics[width=0.66\textwidth]{event_school_trend_2.pdf}\smallskip\\
+ \includegraphics[width=0.66\textwidth]{event_cases_trend_3.pdf}
+&\includegraphics[width=0.66\textwidth]{event_deaths_trend_3.pdf}\smallskip\\%   &
+% \includegraphics[width=0.66\textwidth]{event_school_trend_3.pdf}
+        \end{tabular}
+  \end{minipage}}
+\vspace{-0.2cm}  {\scriptsize
+\begin{flushleft}
+Notes: The figures plot the estimated coefficients for weekly dummies of leads and lags in regression specification [\ref{eq:event}] with 95 percent confidence intervals for three subsample periods.  \end{flushleft}} \vspace{-0.1cm}
+\end{figure}
+
+ We also estimate the time-varying predictive effect of in-person  or hybrid school openings, as well as that of no mask mandates for staffs, relative to remote openings by the estimation method of \cite{Callaway2020} using their \href{https://cran.r-project.org/web/packages/did/vignettes/did-basics.html}{did R package}.
+We define a group by a set of counties with the same school opening date and then estimate the group-time specific average predictive effect of in-person or hybrid opening using the``never-exposed-units'' and ``not-yet-exposed-units'' as the controls while excluding the ``already-exposed-units''  from the control group. Here, we take the counties with the remote opening plan as the ``never-exposed-units.''\footnote{As discussed in \cite{Goodman-Bacon2018} and \cite{Sun2020}, the canonical linear two-way fixed effects (TWFE) regressions with both time fixed effects and unit fixed effects may lead to a biased estimator for the "exposure" effect when "exposure" timings differ across units and, at the same time, the "exposure effects" evolve over time. The bias arises because the "exposure effect" estimate under TWFE regression partly relies on the wrong control units that have already been exposed to treatment under the staggered treatment design.}  Because almost all counties opened their schools by late September, the estimated predictive effect for the lags primarily reflects the predictive effect of in-person or hybrid openings relative to the counties with remote openings rather than the counties that had not opened schools yet. We report estimates for the average of the group-time specific average predictive effects of in-person or hybrid opening against remote opening across groups with different school opening dates. The predictive effects can be causally interpretable as "exposure (treatment) effect" for the exposed group under the group-by-group parallel trend assumption \cite{Callaway2020} on counterfactual outcomes in the unexposed state (importantly, please see the discussion below for limitations of interpreting such effects as "actionable").
+
+Fig. \ref{fig:ca} presents the estimated group-time average predictive effects with 95 percent simultaneous confidence intervals.  Fig.  \ref{fig:ca}(a)-(h) show that  cases and deaths in counties with in-person or hybrid openings relative to those with remote openings increase after school openings; furthermore, these increases are more pronounced for counties without any mask mandate for staff in Fig.  \ref{fig:ca}(c)(d)(g)(h). Fig. \ref{fig:ca}(i)-(p) similarly indicate that the log of weekly cases and deaths in counties with in-person or hybrid openings gradually increase after the school opening date, especially for counties with no mask mandates. In the figures, the estimates in the pre-exposure period are flat and not statistically different from zero, consistent with parallel trend assumption.
+
+Consistent with the findings in Fig. \ref{fig:case-growth}(c)(d),    Fig. \ref{fig:ca}(q)-(x) show that visits to K-12 schools and full-time workplaces increase after the opening of schools in counties with in-person/hybrid teaching relative to those with remote teaching. In contrast, SI Appendix, Fig. S5 indicates no evidence for the association of the school opening date with visits to restaurants, bars, recreational facilities, and churches, suggesting that other unobserved county-level confounders that affect people's mobilities to these places (e.g., lockdown policies) may not be systematically related to the timing of school opening, teaching modes, and mitigation measures.
+
+Our finding is consistent with  \cite{Lessler2021} who examine the data from a massive online survey and find the association between in-person schooling and COVID-19-related outcomes across counties and the importance of school-based mitigation measures for reducing transmission risks in the United States.  In contrast, using an event-study design, \cite{ISPHORDING2021} and \cite{Bismarck-Osten2020} find no evidence that fully opening schools increased case number within the 3-4 weeks of school openings in Germany.  One possible reason for these contradictory findings is that the mitigation measures in German
+schools may have been more effective in containing in-school transmissions than the measures adopted by the US schools with in-person openings. Another important source of the difference is that the event window length of  3-4 weeks in \cite{ISPHORDING2021} and \cite{Bismarck-Osten2020} may be too short to identify the effect of school openings on the confirmed cases because asymptomatic, undetected cases are prevalent among children \citep{Leidman2021}. 
+ 
+\begin{figure*}[!ht]
+  \caption{The average predictive  effects estimates  obtained using the DID method from Callaway and Santana (2020) \label{fig:ca}}  \vspace{-0.1cm}
+\hspace{-0.3cm}\resizebox{1.23\columnwidth}{!}{
+\begin{minipage}{\linewidth}\medskip
+\centering
+        \begin{tabular}{cccc}
+\textbf{\large (a) Cases: In-person vs. Remote  }&\textbf{\large (b) Cases:  Hybrid vs. Remote }&\textbf{\large (c) Cases: In-person/No-Mask vs. Remote}&\textbf{\large (d) Cases:  Hybrid/No-Mask vs. Remote }\smallskip\\
+ \includegraphics[width=0.4\textwidth]{event_cases_csfull.pdf}& \includegraphics[width=0.4\textwidth]{event_cases_cshybrid.pdf} & \includegraphics[width=0.4\textwidth]{event_cases_csfullno.pdf}& \includegraphics[width=0.4\textwidth]{event_cases_cshybridno.pdf}\smallskip\\
+%\smallskip\\
+%\smallskip\\
+\textbf{\large (e) Deaths: In-person vs. Remote  }&\textbf{\large (f) Deaths:  Hybrid vs. Remote }&\textbf{\large (g) Deaths: In-person/No-Mask vs. Remote }&\textbf{\large (h) Deaths:  Hybrid/No-Mask vs. Remote  }\smallskip\\
+ \includegraphics[width=0.4\textwidth]{event_deaths_csfull.pdf}& \includegraphics[width=0.4\textwidth]{event_deaths_cshybrid.pdf}  &
+  \includegraphics[width=0.4\textwidth]{event_deaths_csfullno.pdf}& \includegraphics[width=0.4\textwidth]{event_deaths_cshybridno.pdf} \smallskip\\
+\textbf{\large (i) log(Cases): In-person vs. Remote }&\textbf{\large (j) log(Cases):  Hybrid vs. Remote }&\textbf{\large (k) log(Cases): In-person/No-Mask vs. Remote}&\textbf{\large (l) log(Cases):  Hybrid/No-Mask vs. Remote }\smallskip\\
+ \includegraphics[width=0.4\textwidth]{event_logcases_csfull.pdf}& \includegraphics[width=0.4\textwidth]{event_logcases_cshybrid.pdf} & \includegraphics[width=0.4\textwidth]{event_logcases_csfullno.pdf}& \includegraphics[width=0.4\textwidth]{event_logcases_cshybridno.pdf}\smallskip\\
+\textbf{\large (m) log(Deaths): In-person vs. Remote }&\textbf{\large (n) log(Deaths):  Hybrid vs. Remote }&\textbf{\large (o) log(Deaths): In-person/No-Mask vs. Remote}&\textbf{\large (p) log(Deaths):  Hybrid/No-Mask vs. Remote }\smallskip\\
+ \includegraphics[width=0.4\textwidth]{event_logdeaths_csfull.pdf}& \includegraphics[width=0.4\textwidth]{event_logdeaths_cshybrid.pdf} & \includegraphics[width=0.4\textwidth]{event_logdeaths_csfullno.pdf}& \includegraphics[width=0.4\textwidth]{event_logdeaths_cshybridno.pdf}\smallskip\\
+\textbf{\large (q) School: In-person vs. Remote }&\textbf{\large (r) School:  Hybrid vs. Remote }&\textbf{\large (s) School: In-person/No-Mask vs. Remote}&\textbf{\large (t) School:  Hybrid/No-Mask vs. Remote }\smallskip\\
+ \includegraphics[width=0.4\textwidth]{event_school_csfull.pdf}& \includegraphics[width=0.4\textwidth]{event_school_cshybrid.pdf}
+ &
+ \includegraphics[width=0.4\textwidth]{event_school_csfullno.pdf}& \includegraphics[width=0.4\textwidth]{event_school_cshybridno.pdf}  \smallskip\\
+ \textbf{\large (u) Full-time: In-person vs. Remote }&\textbf{\large (v) Full-time:  Hybrid vs. Remote }&\textbf{\large (w) Full-time: In-person/No-Mask vs. Remote}&\textbf{\large (x) Full-time:  Hybrid/No-Mask vs. Remote }\smallskip\\
+ \includegraphics[width=0.4\textwidth]{event_fullwork_csfull.pdf}& \includegraphics[width=0.4\textwidth]{event_fullwork_cshybrid.pdf}
+ &
+ \includegraphics[width=0.4\textwidth]{event_fullwork_csfullno.pdf}& \includegraphics[width=0.4\textwidth]{event_fullwork_cshybridno.pdf}  \smallskip\\
+\end{tabular}
+  \end{minipage}}
+\vspace{-0.2cm}  {\scriptsize
+\begin{flushleft}
+Notes: (a) plots the estimates and 95\% simultaneous confidence intervals of  the average time-varying predictive effect of in-person openings relative to the counties with remote openings as well as the counties that have not opened yet on cases per 1000 using a subset of counties with either in-person opening or remote-opening, where we use the estimation method of \cite{Callaway2020} implemented by their \href{https://cran.r-project.org/web/packages/did/vignettes/did-basics.html}{did R package}.  Similarly, (b), (c), and (d) plots the estimates of  the average time-varying predictive effects of school opening with hybrid, in-person/mask mandates, and hybrid/mask mandates teaching methods, respectively, using a subset of counties with the corresponding teaching method as well as remote-opening. (e)-(h), (i)-(l), (m)-(p), (q)-(t), and (u)-(x) report the estimates of the average time-varying predictive effect on deaths per 1000, log(cases), log(deaths), per-devise visits to K-12 schools, and per-devise visits to full-time workplaces, respectively.  \end{flushleft}} \vspace{-0.5cm}
+\end{figure*}
+ 
+\begin{figure}[!ht]
+  \caption{The causal path diagram for our model \label{fig:dag}}
+  \resizebox{1.2\columnwidth}{!}{
+      \includegraphics[clip, trim=5.5cm 18.7cm 2cm 3.8cm, width=1.00\textwidth]{DAG.pdf}
+      } 
+      \end{figure}
+
+While our event-study analysis provides valuable preliminary evidence on the predictive links between school reopenings and subsequent increases in infection rates,  there are several important limitations in terms of assumptions and interpretation. First, the parallel trend assumption required for causal interpretation of the predictive results might be at odds with the implications of the main epidemiological models that the spread of cases is highly non-linear  \citep{Callaway2021}, with the current number of cases dynamically depending on the number of past infected individuals. Second, the transmission itself is influenced by other containment policies and people's voluntary behavioral changes in response to information about infection levels \citep{chernozhukov2021}.  If other mitigation policies respond to past infection levels, the predictive effects derived from the event-study analysis may not capture the "direct causal" effects  (i.e., effects that hold other policies and other state variables fixed) of the target school-reopening policies, but rather the "total effect" for the exposed group. This makes it difficult to generate actionable policy insights. For instance, in an extreme case, the "total effect" may be zero because other mitigation policies completely offset the effect of the target policy. Therefore, in such cases, one may mistakenly conclude that the target school-reopening policy is "safe" and should be implemented regardless of the other policies. Therefore, the results from event-study analysis need to be interpreted very cautiously, even if the parallel trend assumption holds.  
+ 
+\section*{Main Analysis: Dynamic Panel Regression Model}
+Motivated by the previously outlined limitations of the simple "event study" design, we purse an alternative dynamic panel data approach.  We analyze the predictive effect of  opening K-12 schools on case growth rates by panel data regression under the dynamic uncounfoundedness assumption, where a specification is motivated by the Susceptible-Infectious-Recovered-Deceased (SIRD) model.  
+
+We emphasize at the outset and below in the Limitations section that, while the motivation for this modelling is to approximate the causal effects of policies, holding other policies and other state variables fixed, the approach is based on observational (non-experimental) data, and therefore the results should be interpreted with great caution. From a completely agnostic point of view, our results can be seen as uncovering predictive effects of in-person/hybrid school re-openings on case and death growth rates, controlling linearly for other policies, past infection levels and county and state-week "fixed" effects. Furthermore, the "actionable" policies naturally supported from our predictive analysis -- the staff masking and other mitigation measures in schools and prioritization of vaccination for teachers and elderly parents --  appear to be non-harmful and have low implementation costs.
+
+\subsection*{Methods} SI Appendix provides the details for  our research design which closely follows \cite{chernozhukov2021}.
+Fig. \ref{fig:dag} is a causal path diagram \citep[see][]{pearl:causality,hunermund2021causal} for our model that describes how policies, behavior, and information interact together:
+\begin{itemize}
+\item The \textit{forward} health outcome,
+$Y_{i,t+\ell}$, is determined last after all other variables have been determined;
+\item The policies, $P_{it}$,  affect health outcome $Y_{i,t+\ell}$ either directly, or indirectly through mediators, human behavior $B_{it}$, which may only be partially observed. 
+\item  Information variables, $I_{it}$, such as lagged values of outcomes can affect human behavior and policies, as well as  outcomes directly;
+\item The confounders $W_{it}$, which vary across counties and time, affect all other variables; these include testing rates and
+unobserved but estimable county and state-week effects.
+\end{itemize}
+
+The index $i$ denotes the county $i$, and $t$ and $t+\ell$ denotes the time, where $\ell$ represents the time lag between infection and case confirmation or death. Our health outcomes are the growth rates in Covid-19 cases and deaths. Policy variables include school reopening in various modes, mask mandates, ban gathering, and stay-at-home orders, while information variables include lagged values of cases or deaths.
+
+The causal structure allows for the effect of the policy to be either direct or indirect. For example, school openings not only directly affect case growth through the within-school transmission but also indirectly affect case growth by increasing parents' mobility. The structure also allows for changes in behavior to be brought by the change in policies and information. The information variables, such as the actual recorded number of past  confirmed cases, can cause people to spend more time at home, regardless of adopted policies; these changes in behavior, in turn, affect the transmission of SARS-CoV-2.
+
+To further motivate our panel regression specification, we consider the SIRD
+model:
+\begin{align}
+  \dot{S}(t) & = -\frac{S(t)}{N} \beta(t) \Infected(t),\quad
+  \dot{\Infected}(t)   = \frac{S(t)}{N} \beta(t) \Infected(t) - \gamma  \Infected(t), \label{eq:i}\\
+  % \frac{S(t-\ell)}{N} \beta(t-\ell)  \Infected(t-\ell) \label{eq:i} \\
+  \dot{\Recovered}(t) & = (1-\kappa) \gamma  \Infected(t),\quad   \dot{D}(t)  = \kappa \gamma \Infected(t), \nonumber %  \frac{S(t-\ell)}{N} \beta(t-\ell)   \Infected(t-\ell)
+  \label{eq:d}
+\end{align}
+where $S$, $\Infected$, $\Recovered$, and $D$ denote the number of susceptible,
+infected, recovered, and deceased individuals in a given state.  Each of these variables is a function of time and dots indicate time derivative. $N$ is the population, $\beta(t)$ is the rate of infection
+spread, $\gamma$ is the rate of recovery or death, and $\kappa$ is the
+probability of death conditional on infection. Confirmed cases, $C(t)$, evolve as
+\begin{equation}
+  \dot{C}(t) = \tau(t) \Infected(t), \label{eq:c}
+\end{equation}
+where $\tau(t)$ is the testing proportion (detection rate). Differentiating the logarithm of [\ref{eq:c}] and substituting [\ref{eq:i}], we have
+\begin{align} 
+  \frac{\ddot{C}(t)}{\dot{C}(t)}
+              & =
+                \frac{S(t)}{N} \beta(t) -\gamma  + \frac{\dot{\tau}(t)}{\tau(t)}, \label{eq:c2} 
+\end{align}
+which indicates that the growth rate of cases depends on the rate of infection spread and the change in detection rates.
+
+Our empirical specification is a discrete-time analog of equation [\ref{eq:c2}] by approximating the case growth rate with the log difference in weekly confirmed cases and specifying $\frac{S(t)}{N}\beta(t)$ as a linear function of the variable for K-12 school visits, policies,  past cases,
+ county fixed effects, and state-week fixed effects:
+\begin{align}
+&\Delta_7 \log \text{\textit{Case}}_{it}  =  \beta' \text{\textit{Visit}}_{i,t-14}  +   \sum_{\tau=14,21,28} \beta_{y,\tau} \log \text{\textit{Case}}_{i,t-\tau}  \nonumber\\
+&\quad\qquad + \gamma' \text{\textit{NPI}}_{i,t-14}  + \theta \text{\textit{Test}}_{it}+\alpha_i +\delta_{s(i),w(t)} + \epsilon_{it},  \label{eq:panel-1} 
+\end{align}
+where $i$ is county, $t$ is day. The outcome variable $\Delta_7 \log \text{\textit{Case}}_{it}:=\log \text{\textit{Case}}_{it}-\log \text{\textit{Case}}_{i,t-7}$ is the log-difference  over 7 days in reported weekly cases with $\text{\textit{Case}}_{it}$ denoting the number of confirmed cases from day $t-6$ to $t$. For the observation with zero weekly cases,  we set the value of the log of weekly cases, $\log \text{\textit{Case}}_{it}$, to be $-1$.
+
+$\text{\textit{Visit}}_{i,t-14}$ includes per-device  K-12 school visits and college visits lagged by 14 days from the SafeGraph foot traffic data (SI Appendix, Fig. S4(c)(f)). The direct measure of K-12 school visits has advantages over that of school opening modes from the MCH data because the latter is prone to measurement errors caused by unrecorded changes in teaching methods and school closures beyond the information recorded in the MCH data.   The measure of K-12 school visits may also capture student density heterogeneity within the same opening mode, especially for the hybrid teaching method.
+
+As confounders, we consider a set of county fixed effects, $\alpha_i$, as well as state-week fixed effects, $\delta_{s(i),w(t)}$. County fixed effects $\alpha_i$ control permanent differences across counties in unobserved personal risk-aversion and attitude toward mask-wearing, hand washings, and social distancing. The coefficient $\delta_{s(i),w(t)}$  on the interaction terms between state dummy variables and week dummy variables capture any change over time in people's behaviors and non-pharmaceutical policy interventions (NPIs) that are common within a state; they also control for changes in weather, temperature, and humidity within a state.  $\text{\textit{NPI}}_{i,t-14}$ includes
+county-level NPIs (mask mandates, banning gathering of more than 50 persons, stay-at-home orders) lagged by two weeks that control for the effect of people's behavioral changes driven by county-level policies on case growths. NPI  data on stay-at-home orders and gathering bans is from \href{https://github.com/JieYingWu/COVID-19_US_County-level_Summaries}{Jie Ying Wu} \cite{killeen2020} while  \href{https://drive.google.com/uc?export=download&id=1qVIhPaBQ-apdDjOaKV2eA9SgZNkLMLAm}{the data on mask policies} is from  \cite{Wright2020}. These NPI data contain information up to the end of July; in our regression analysis, we set the value of these policy variables after August to be the same as the last day of observations.
+
+$\text{\textit{Test}}_{it}$ is the growth rate of the number of tests recorded at the daily frequency for each state to capture the changes in detection rates ${\dot{\tau}(t)}/{\tau(t)}$ in [\ref{eq:c2}].  This variable is important to fill the gap between confirmed cases and actual infections.
+
+Finally, the logarithm of past weekly confirmed cases denoted by $\log \text{\textit{Case}}_{i,t-\tau}$ for $\tau=14, 21$, and $28$  are included  in [\ref{eq:c2}] as important confounders representing information variables. First, because the timing and the mode of school openings are likely to be affected by the number of lagged cases or deaths (e.g., the decision to reopen schools in California and Oregon depended on trends in local case counts \citep{Goldhaber-Fiebert2020}), controlling for the past weekly cases is critical for the unconfoundedness assumption.\footnote{Referring to the causal path diagram in Fig. \ref{fig:dag}, the information variables affect both policies (e.g., school openings) and  the people's behavior (see \cite{chernozhukov2021} and Table \ref{tab:PItoB} for empirical evidence). Even if information variables do not affect outcome directly, they are important confounders because in the terminology of Pearl \cite{pearl:causality}, they open a ``backdoor'' path from outcome to policy, which creates a non-causal association between policies and outcomes. By controlling for information variables (and other confounders), we block non-causal associations, revealing the association generated by the causal effect of policies on outcomes. See our discussion in SI Appendix as well as \cite{pearl:causality} for more details.} Second, controlling for past confirmed cases is important because people may voluntarily change their risk-taking behavior in response to the new information provided by the \textit{confirmed} cases rather than the \textit{actual}, but unknown, number of infected individuals. On the other hand, people's behavior may also be affected by the actual number of infected individuals beyond the reported cases, given that some people may see their friends or family get COVID-19.\footnote{Viewing that the reported cases as a proxy for the actual number of infected individuals with measurement errors, if measurement errors at $t-7$ and $t-14$  are correlated, then such a correlation may bias the estimate given that the left hand side variable contains $\log \text{\textit{Case}}_{i,t-7}$ while the right hand side includes $\log \text{\textit{Case}}_{i,t-14}$ in equation [\ref{eq:panel-1}].}
+ 
+We also consider an alternative specification  using  the proportion of K-12 students attending schools with teaching method $p\in \{\text{in-person},\text{hybrid},\text{remote}\}$ constructed from the MCH data in place of the visits to K-12 schools from the foot traffic data. Furthermore, we investigate the role of mitigation strategies at school on the transmission of SARS-CoV-2 by examining how the coefficients of K-12 school visits and K-12 school openings depend on the mask-wearing requirement for staff with an interaction term between school opening variables and a dummy variable for staff mask-wearing requirements.
+ 
+For parameter identification, we assume that the error $\epsilon_{it}$ in [\ref{eq:panel-1}] is orthogonal to the observed explanatory variables of school visits/openings, NPIs, test rates, and the past log cases, county fixed effects, and state-week fixed effects. The estimated parameters for school openings can be causally interpreted under the unconfoundedness assumption that the variables related to school openings (school visits, opening dates, teaching methods) are as good as randomly assigned after conditioning on other controls, county fixed effects, and state-week fixed effects.
+
+Because the fixed effects estimator with a set of county dummies for dynamic panel regression could be severely biased when the time dimension is short compared to cross-sectional dimension \citep{Nickell1981}, we employ the debiased estimator by implementing bias correction  \citep[e.g.,][]{chen2019mastering} although the fixed effects estimator without bias correction gives qualitatively similar results. See SI Appendix, Table S5 and  Fig. S8 for the results from the fixed effects estimator without bias correction.
+
+ \subsection*{Result}
+Table \ref{tab:PItoY}  reports the debiased estimates of predictive effects of our dynamic panel data regression models.  Clustered standard errors at the state level are reported in the bracket to provide valid inference under possible dependency over time and across counties within each state.
+The results suggest that an increase in the visits to K-12 schools and opening K-12 schools with in-person learning mode predicts (is associated with) an increase in the growth rates of cases with two weeks lag when schools implement no mask mandate for staff.
+
+In column (1),  that of per-device visits to K-12 schools is 0.47 (SE = 0.07).  The change in top 5 percentile values of per-device visits to  K-12 schools between June and September among counties is around 0.15 in SI Appendix, Fig. S4(c). Taking this value as a benchmark for full openings,  fully opening K-12 schools may have contributed to (0.47$\times$0.15=) 7 percentage points increase in case growth rates. Column (3) indicates that openings of K-12 schools with the in-person mode are associated with 5 (SE = 2) percentage point increases in weekly case growth rates. It also provides evidence that openings of K-12 schools with remote learning mode are associated with lower case growth, perhaps because remote school opening induces more precautionary behavior to reduce transmission risk.
+
+In column (2), the estimated coefficient of the interaction between K-12 school visits and no mask-wearing requirements for staff is 0.24 (SE=0.07),   providing evidence that mask-wearing requirements for staff may have reduced the transmission of SARS-CoV-2  at schools. Similarly, in column (4), the coefficients on the interaction of in-person and hybrid school openings with no mask mandates are positively estimated as 0.04 (SE=0.02) and 0.05 (SE=0.02), respectively.   These estimates likely reflect not only the effect of mask-wearing requirements for staff but also that of other mitigation measures. For example, school districts with staff mask-wearing requirements frequently require students to wear masks and often increase online instructions.
+
+Other studies on COVID-19 spread in schools have also pointed to the importance of mitigation measures. In contact tracing studies of cases in schools, \cite{gillespie2021} found that 6 out of 7 traceable case clusters were related to clear noncompliance with mitigation protocols, and  \cite{zimmerman2020} found that most secondary transmissions were related to absent face coverings.
+\cite{hobbs2020} find that children who tested positive for COVID-19 are considerably less likely to have had reported consistent mask use by students and staff inside their school.
+
+The estimated coefficient of per-device visits to colleges is 0.14 (SE = 0.07) in column (1) of  Table \ref{tab:PItoY}.  With the change in top 5 percentile values of college visits between June and September as a benchmark for full openings,  which is about 0.1,  fully opening colleges may be associated with (0.14$\times$0.1=) 1.4 percentage points increase in case growth. Therefore, the estimated association of opening colleges with case growth is much smaller than that of opening K-12 schools. Furthermore, alternative specifications in columns (2) and (4) of Table \ref{tab:PItoY} and those in Fig. \ref{fig:sensitivity}  yield
+smaller, and sometimes insignificant, estimates for college visits. This sensitivity may be due to the limited variation in changes in college visits over time across counties in the data, where the 75 percentile value of college visits is consistently very low (SI Appendix, Fig. S4(f)). SI Appendix presents more discussions on the association of opening colleges with the spread of COVID-19, where Fig. S2 and S3 provide descriptive evidence that opening colleges and universities may be associated with the spread of COVID-19 in counties where a large public universities are located.
+
+Consistent with evidence from US state-level panel data analysis in \cite{chernozhukov2021}, the estimated coefficients of county-wide mask mandate policy are negative and significant in columns (1)-(4), suggesting that mandating masks reduces case growth. The estimated coefficients of ban gatherings and stay-at-home orders are also negative. The negative estimates of the log of past weekly cases are consistent with a hypothesis that the information on higher transmission risk induces people to take precautionary actions voluntarily to reduce case growth.  The table also highlights the importance of controlling for the test growth rates as a confounder.
+
+Evidence on the role of schools in the spread of COVID-19 from other studies is mixed. Papers that focus on contract tracing of cases among students find limited spread from student infections \citep{zimmerman2020,brandal2021,ismail2020,gillespie2021,falk2021,willeit2021}.  There is also some evidence that school openings are associated with increased cases in the surrounding community. \cite{bignami2021} provides suggestive evidence that school openings are associated with increased cases in Montreal neighborhoods. \cite{auger2020} use US state-level data to argue that school closures at the start of the pandemic substantially reduced the infection.
+
+Three closely related papers also examine the relationship between schools and county-level COVID-19 outcomes in the US. \cite{goldhaber2021} examine the relationship between schooling and cases in counties in Washington and Michigan. They find that in-person schooling is only associated with increased cases in areas with high pre-existing COVID-19 cases. Similarly, \cite{harris2021} analyze US county-level data on COVID-19 hospitalizations and find that in-person schooling is not associated with increased hospitalizations in counties with low pre-existing COVID-19 hospitalization rates. The outcome variable of our regression analysis is case growth rates instead of new cases or hospitalizations. Consistent with \cite{goldhaber2021} and \cite{harris2021}, our finding of a constant increase in growth rates implies a greater increase in cases in counties with more pre-existing cases. \cite{reinbold2021} finds that counties with hybrid or remote openings had fewer cases than those with in-person openings but finds no association of teaching modes with deaths during the    first three weeks of the school year in Illinois,. Our finding on death rates does not necessarily contradict that of  \cite{reinbold2021} because the three weeks period is too short to identify the effect on deaths, whereas we examine the effect on deaths after 3 to 5 weeks of openings.
+
+\begin{table}[!htbp] \centering
+ \caption{The Predictive Effects (Association) of School/College Openings and other NPIs on Case Growth in the United States: Debiased Estimator}\vspace{-0.3cm}
+ \label{tab:PItoY}
+\resizebox{\columnwidth}{!}{
+\begin{tabular}{@{\extracolsep{1pt}}lcc|cc}
+\\[-1.8ex]\hline
+\hline \\ [-1.8ex]
+ & \multicolumn{4}{c}{\textit{Dependent variable:  Case Growth Rates}} \\
+\cline{2-5} 
+& (1) & (2) & (3) & (4)\\
+\hline %\\[-1.8ex]
+K-12 Visits, 14d  lag  & 0.467$^{***}$ & 0.386$^{***}$ &  &  \\
+  & (0.070) & (0.070) &  &  \\
+ K-12 Visits $\times$ No-Mask, 14d  lag &  & 0.297$^{***}$ &  &  \\
+  &  & (0.070) &  &  \\
+K-12  In-person, 14d  lag  &  &  & 0.047$^{***}$ & 0.023 \\
+  &  &  & (0.017) & (0.021) \\
+K-12 Hybrid, 14d  lag  &  &  & $-$0.008 & $-$0.037$^{***}$ \\
+  &  &  & (0.014) & (0.013) \\
+K-12  Remote, 14d  lag  &  &  & $-$0.082$^{***}$ & $-$0.102$^{***}$ \\
+  &  &  & (0.016) & (0.015) \\
+ K-12   In-person $\times$ No-Mask, 14d  lag &  &  &  & 0.041$^{**}$ \\
+  &  &  &  & (0.019) \\
+ K-12  Hybrid $\times$ No-Mask, 14d  lag &  &  &  & 0.049$^{***}$ \\
+  &  &  &  & (0.017) \\ \hline
+ College Visits, 14d  lag  & 0.139$^{*}$ & 0.070 & 0.132$^{**}$ & 0.010 \\
+  & (0.071) & (0.073) & (0.064) & (0.076) \\
+Mandatory mask, 14d  lag & $-$0.113$^{***}$ & $-$0.123$^{***}$ & $-$0.128$^{***}$ & $-$0.128$^{***}$ \\
+  & (0.018) & (0.017) & (0.020) & (0.019) \\
+Ban gatherings, 14d  lag & $-$0.124$^{***}$ & $-$0.136$^{***}$ & $-$0.135$^{***}$ & $-$0.137$^{***}$ \\
+  & (0.033) & (0.044) & (0.033) & (0.042) \\
+Stay at home, 14d  lag & $-$0.264$^{***}$ & $-$0.260$^{***}$ & $-$0.261$^{***}$ & $-$0.268$^{***}$ \\
+  & (0.031) & (0.039) & (0.034) & (0.040) \\\hline
+ log(Cases), 14d  lag  & $-$0.101$^{***}$ & $-$0.101$^{***}$ & $-$0.098$^{***}$ & $-$0.099$^{***}$ \\
+  & (0.009) & (0.010) & (0.010) & (0.010) \\
+ log(Cases), 21d  lag & $-$0.061$^{***}$ & $-$0.060$^{***}$ & $-$0.060$^{***}$ & $-$0.059$^{***}$ \\
+  & (0.005) & (0.005) & (0.005) & (0.005) \\
+ log(Cases), 28d  lag  & $-$0.030$^{***}$ & $-$0.033$^{***}$ & $-$0.031$^{***}$ & $-$0.034$^{***}$ \\
+  & (0.003) & (0.003) & (0.004) & (0.004) \\
+  Test Growth Rates & 0.009$^{**}$ & 0.008$^{*}$ & 0.009$^{**}$ & 0.009$^{**}$ \\
+  & (0.004) & (0.004) & (0.004) & (0.004)\\
+ \hline %\\[-1.8ex]
+County Dummies & Yes & Yes &  Yes  &  Yes  \\
+State$\times$ Week Dummies&Yes & Yes &  Yes  &  Yes  \\
+\hline \\[-1.8ex] Observations & 690,297 & 545,131 & 612,963 & 528,941 \\
+R$^{2}$ & 0.092 & 0.093 & 0.092 & 0.094 \\ \hline
+\hline % \\[-1.8ex]  %& \multicolumn{4}{r}
+\end{tabular}}
+\vspace{-0.2cm}  {\scriptsize
+\begin{flushleft}
+Notes: Dependent variable is the log difference over 7 days in weekly positive cases. Regressors are 7-days moving averages of corresponding daily variables  and lagged by 2 weeks to reflect the time between infection and case reporting except for test growth rates. All regression specifications include county fixed effects and state-week fixed effects.
+The debiased fixed effects estimator is applied.  The results from the estimator without bias correction is presented in  SI Appendix, Table S5.
+Asymptotic clustered standard errors at the state level are reported in bracket.   {$^{*}$p$<$0.1; $^{**}$p$<$0.05; $^{***}$p$<$0.01}
+\end{flushleft}}
+\end{table}
+
+We next provide sensitivity analysis by changing our regression specifications and assumptions about delays between infection and reporting cases as follows:
+\begin{itemize}
+\item[(1)] Baseline specifications in columns (1) and (2) of Table \ref{tab:PItoY}.
+\item[(2)]\hspace{-0.15cm},(3) Alternative time lags of 10 and 18 days for visits to colleges and K-12 schools as well as NPIs.
+\item[(4)] Setting the log of weekly cases to $0$ when we observe zero weekly cases to compute the log-difference in weekly cases for the outcome variable.
+\item[(5)] Add the log of weekly cases lagged by 5 weeks and per-capital \textit{cumulative} number of cases lagged by 2 weeks as controls.
+\item[(6)] Add per-device visits to restaurants, bars, recreational places, and churches  lagged by 2 and 4 weeks as controls.
+\item[(7)] Add per-device visits to full-time and part-time workplaces and a proportion of devices staying at home lagged by 2 weeks as controls.
+\item[(8)] All of (5)-(7).
+\end{itemize}
+
+Because the actual time lag between infection and reporting cases may be shorter or longer than 14 days, we consider the alternative time lags in (2) and (3). Specification (4) checks the sensitivity of handling zero weekly cases to construct the outcome variable of the log difference in weekly cases.
+
+A major concern for interpreting our estimate in Table \ref{tab:PItoY} as the causal effect is that a choice of opening timing, teaching methods, and mask requirements may still reflect (residual, unaccounted) sources of confounding. Our baseline specification models confounding by controlling for past infection rates (log of cases), other past implemented policies, and "latent" county and state-week "fixed" effects. However, a choice of school openings may still be correlated with unmodeled time-varying unobserved factors at the county level. To further examine the sensitivity to the inclusion of potential other confounders, we estimate a specification with additional time-varying county-level controls in (5)-(8).
+
+\begin{figure}[!ht]
+  \caption{Sensitivity analysis for the estimated coefficients of K-12 visits and college visits of case growth regressions: Debiased Estimator \label{fig:sensitivity}}
+\resizebox{\columnwidth}{!}{
+        \begin{tabular}{c}
+      (a) Case Growth Estimates   \\
+      \includegraphics[width=0.48\textwidth]{school-college-bc-whisker-cases.pdf} \\
+       (b) Case Growth Estimates with School Visits $\times$ No Mask   \\
+     \includegraphics[width=0.48\textwidth]{school-college-bc-whisker-cases-hetero.pdf}  \\ 
+       \end{tabular}}
+\vspace{-0.2cm}   {\scriptsize
+\begin{flushleft}
+Notes:  (a) presents the estimated coefficient of college visits and K-12 school visits with the 90 percent confidence intervals across different specifications taking the column (1) of Table  \ref{tab:PItoY}  as baseline. (b) presents the estimates of coefficients on college visits, K-12 school visits, and the interaction between K-12 school visits and no mask wearing requirement for staff  taking column (2) of Table  \ref{tab:PItoY}  as baseline. The results are based on the debiased estimator.  SI Appendix, Fig. S8 presents the results based on the  estimator without bias correction.
+\end{flushleft}  }
+\end{figure}
+
+Fig. \ref{fig:sensitivity}(a) takes column (1) of Table \ref{tab:PItoY} as a baseline specification and plots the estimated coefficients for visits to colleges and K12 schools with the 90 percent confidence intervals across different specifications using the debiased estimator; the estimates using the standard estimator \textit{without} bias correction are qualitatively \textit{similar} and reported in SI Appendix, Fig. S8. The estimated coefficients of K-12 school visits and college visits are all positive across different specifications, suggesting that an increase in visits to K-12 schools and colleges is robustly associated with higher case growth. On the other hand, the estimated coefficients often become smaller when we add more controls. In particular, relative to the baseline, adding full-time/part-time workplace visits and staying home devices leads to somewhat smaller estimated coefficients for K-12 school and college visits, suggesting that opening K-12 schools and colleges is associated with people returning to work and/or going outside more frequently.
+
+In Fig. \ref{fig:sensitivity}(b), the estimated interaction terms of K-12 school visits and no mask-wearing requirements for staff in column (2) of Table \ref{tab:PItoY} are all positive and significant, robustly indicating a possibility that mask-wearing requirement for staff may have helped to reduce the transmission of SARS-CoV-2 at schools when K-12 schools opened with the in-person teaching method.
+
+SI Appendix, Tables S6-S7 provide further robustness checks, showing that the results are similar even when we use the log of weekly cases in place of the log difference of weekly cases as the outcome variable.
+
+\subsection*{Association between School Openings and Mobility}
+
+As highlighted by a modeling study for the United Kingdom
+\citep{panovska2020lancet}, there are at least two reasons why opening  K-12 schools in-person may increase the spread of COVID-19. First,  opening K-12 schools increases the number of contacts within schools, which may increase the risk of transmission among children, parents,  education workers, and communities at large. Second, reopening K-12 schools allow parents to return to work and increase their mobility in general,  which may contribute to the transmission of  COVID-19 at schools and workplaces.
+
+To give insight on the role of reopening K-12 schools for parents to return to work and to increase their mobility, we conduct panel data regression analysis by taking visits to full-time workplaces and a measure of staying home devices as outcome variables and use a similar set of regressors as in Table \ref{tab:PItoY} but without taking 2 weeks time lags.
+
+Table \ref{tab:PItoB} shows how the proportion of devices at full-time workplaces and that of staying home devices are associated with visits to  K-12 schools as well as their in-person openings. In columns (1) and (2), the estimated coefficients of per-device K-12 school visits and opening K-12 schools for full-time work outcome variables are positive and especially large for in-person K-12 school opening. Similarly, the estimates in columns (3) and (4) suggest the negative association of per-device K-12 school visits and opening K-12 schools with the proportion of devices that do not leave their home. SI Appendix, Table S4 also provides evidence that the visits to restaurants and bars are positively associated with the visits to  K-12 schools and colleges. This is consistent with a hypothesis that opening K-12 school allows parents to return to work and spend more time outside. This result may also reflect education workers returning to work. In columns (3) and (4), the positive coefficient of current and past log cases suggests that people voluntarily choose to stay home when the transmission risk is high.
+
+Table \ref{tab:PBItoY}  presents regression analysis similar to that in Table \ref{tab:PItoY} but including the proportion of devices at full-time/part-time workplaces and those at home as additional regressors, which corresponds to specification (7) in Fig. \ref{fig:sensitivity}. The estimates indicate that the proportion of staying home devices is negatively associated with the subsequent case growth, while the proportion of devices at full-time workplaces is positively associated with the case growth. Combined with the estimates in Table \ref{tab:PItoB}, these results suggest that school openings may have increased the transmission of SARS-CoV-2 by encouraging parents to return to work and to spend more time outside. This mechanism can partially explain the discrepancy between our findings and various studies that focus on cases among students. Contract tracing of cases in schools, such as \cite{falk2021}, \cite{zimmerman2020}, \cite{willeit2021}, \cite{brandal2021}, and \cite{ismail2020}, often finds limited direct spread among students. On the other hand, \cite{vlachos2021} finds that parents and teachers of students in open schools experience increases in infection rates.
+
+In columns (1)-(2) of Table \ref{tab:PBItoY}, the estimated coefficients on K-12 school visits remain positive and large even after controlling for the mobility measures of returning to work and being outside home, which are mediator variables to capture the indirect effect of school openings on case growth through its effect on mobility. The coefficient on K-12 school visits is approximately 75\% as large in Table \ref{tab:PBItoY} as in Table \ref{tab:PItoY}, suggesting that that within-school transmission may be the primary channel through which school openings affect the spread of COVID-19. Furthermore, the estimated coefficient of the interaction of K-12 school visits with no-mask variable in column (2) does not change after adding these measures of returning to work, indicating the importance of precautionary measures at schools even after conditioning parents' going back to work. 
+
+\subsection*{Death Growth Regression} We also analyze the effect of school openings on the death growth by estimating:
+\begin{align}
+&\Delta_{21} \log \text{\textit{Death}}_{it}  =  \beta' \text{\textit{Visit}}_{i,t-35}  +   \sum_{\tau=35,42,49} \beta_{y,\tau} \log \text{\textit{Death}}_{i,t-\tau}  \nonumber\\
+&\quad\qquad+ \gamma' \text{\textit{NPI}}_{i,t-35} +\alpha_i + \delta_{s(i),w(t)} + \epsilon_{it},  \label{eq:panel-3}
+% \delta_D \frac{T_{it}\Delta D_{it}}{\Delta C_{it}}  + \epsilon_{it},
+% \label{eq:M} \tag{M-C}
+\end{align}
+where the outcome variable $\Delta_{21} \log \text{\textit{Death}}_{it} :=\log \text{\textit{Death}}_{it}-\log \text{\textit{Death}}_{i,t-21}$ is  the log difference  over 21 days in reported weekly deaths with $\text{\textit{Death}}_{it}$ denoting  the number of reported deaths from day $t-6$ to $t$. The log of weekly deaths, $\log \text{\textit{Death}}_{it}$, is set to be $-1$ when we observe zero weekly deaths. We take the log difference over 21 days rather than 7 days for measuring death growth because the time lag between infection and death reporting is stochastic and spreads over at least 2 weeks.\footnote{ For deceased persons above 65 years old between March 1, 2020 and January 31, 2021, CDC estimates that the interquartile range for the number of days from symptom onset to death is (9,25) days while the interquartile range from death to reporting is (4,59) days. See  Table 2 of \url{https://www.cdc.gov/coronavirus/2019-ncov/hcp/planning-scenarios.html}.  }
+
+The explanatory variables in [\ref{eq:panel-3}]  are lagged by 35 days to capture the time lag of infection and death reporting. Taking a longer time lag than 35 days may capture the effect of school openings on deaths through the secondary infection better (e.g., an infection from children to parents/grandparents); therefore, we also consider a lag length of 42 and 49 days.
+ 
+Fig. \ref{fig:sensitivity-death} illustrates the estimated coefficients of visits to colleges and K-12 schools across different specifications for death growth regressions. Fig. \ref{fig:sensitivity-death}(a) shows that the coefficient of visits to colleges and K-12 schools are positively estimated for (1) baseline, (2)-(3) an alternative time lag of  42 and 49 days, (4)  setting the log of weekly deaths to $0$ when we observe zero weekly deaths to compute death growth over 3 weeks,  and adding more controls in (5)-(8), providing robust evidence that an increase in visits to colleges and K-12 schools is positively associated with the subsequent increase in weekly death growth rates.   Fig. \ref{fig:sensitivity-death}(b) corresponds to  Fig. \ref{fig:sensitivity}(b), showing that the association of K-12 school visits with death growth is stronger when no mask mandate for staff is in place.
+
+SI Appendix, Table S9 reports the baseline estimates while Table S10 shows those for the specification with staying home devices and workplace visits. The estimated coefficients on K-12 school visits remain positive and large even after controlling for the variables of returning to work and being outside the home in Table S10, suggesting the possible role of within-school transmission for a rise in deaths after school openings. These results are consistent with our findings in case growth regressions.
+ 
+\begin{figure}[!ht]
+  \caption{Sensitivity analysis for the estimated coefficients of K-12 visits and college visits of death growth regressions: Debiased Estimator \label{fig:sensitivity-death}}
+\resizebox{\columnwidth}{!}{
+        \begin{tabular}{c}
+      (a) Death Growth Estimates   \\
+      \includegraphics[width=0.49\textwidth]{school-college-bc-alt-whisker-death35.pdf} \\
+       (b) Death Growth Estimates with School Visits $\times$ No Mask   \\
+       \includegraphics[width=0.49\textwidth]{school-college-bc-alt-whisker-death-hetero35.pdf}
+       \end{tabular}}
+\vspace{-0.2cm}   {\scriptsize
+\begin{flushleft}
+Notes:  (a) presents the estimated coefficient of college visits and K-12 school visits with the 90 percent confidence intervals across different specifications taking the column (1) of SI Appendix, Table S9 as baseline. (b) presents the estimates of coefficients of college visits, K-12 school visits, and the interaction between K-12 school visits and no mask wearing requirement for staff  taking column (2) of SI Appendix, Table S9  as baseline.
+\end{flushleft}  }
+\end{figure}
+
+\section*{Limitations}
+Our study has the following limitations.  First, our study is observational and should be interpreted with great caution. Indeed, the potential presence of unobserved/unaccounted confounding factors can invalidate the interpretation of the predictive effects as causal effects.  While we control for a variety of potential confounding factors, including other mitigation policies, past infection rates, and county and state-week "fixed" effects,  the decisions to open K-12 schools may be still correlated with other unobserved time-varying county-level factors that affect the spread of COVID-19. For example, people's attitudes toward social distancing, hand-washing, and mask-wearing may change over time (which we cannot observe in the data). Their changes may be correlated with school opening decisions beyond the controls we added to our regression specifications.  
+
+Our analysis is also limited by the quality and the availability of the data as follows. The reported number of cases is likely to understate true COVID-19 incidence, especially among children and adolescents because they are less likely to be tested than adults given that children exhibit milder or no  symptoms. This is consistent with CDC data which shows the lower testing volume and the higher rate of positive test among children and adolescents than adults \citep{Leidman2021}.  County-level testing data is not used because of a lack of data, although state-week fixed effects control for the weekly difference across counties within the same state and we also control daily state-level test growth rates.
+
+Because foot traffic data is constructed from mobile phone location data, the data on K-12 school visits likely reflects the movements of parents and older children who are allowed to carry mobile phones to schools and excludes those of younger children who do not own mobile phones.\footnote{We also focus on limited Points-Of-Interest: K-12 schools, colleges and universities, restaurants, drinking places, other recreational places including recreational facilities, and churches. We check the robustness by including visits to assisted living facilities for the elderly and nursing care facilities as additional controls, but the results are not sensitive to their inclusion.}
+
+Because COVID-infected children and adolescents are known to be less likely to be hospitalized or die from COVID, the consequence of transmission among children and adolescents driven by school openings crucially depends on whether the transmission of SARS-CoV-2 from infected children and adolescents to the older population can be prevented.\footnote{In the meta-analysis of 54 studies
+on the household transmission of SARS-CoV-2 \cite{zachary2020}, estimated household secondary attack rate \textit{to} child contacts was 16.8\%. \cite{miyahara2021} reports that household secondary attack rate \textit{from} children and adolescence to other family members was 23.8\% and higher than other age groups in Japan.}  Our analysis does not provide any empirical analysis on how school opening is associated with the transmission across different age groups due to data limitations.\footnote{CDC collects the data on the number of reported cases by age groups from each state whenever such data is available. However, for many counties, the reported cases by age groups are missing or there exists a substantial gap between the sum of cases across different age groups reported by CDC and the total number of  cases reported in NYT case data (see, for example, the case of Ingham, MI, in  SI Appendix,  Fig. S3).} \cite{vlachos2021} show that teachers in open schools experience higher COVID-19 infection rates compared to teachers in closed schools. They also show that this increase in infection rate also occurs in partners of teachers and parents of students in open schools.
+
+The impact of school openings on the spread of COVID-19 on case growth may be different across counties and over time because it may depend not only on in-school mitigation measures but also on contact tracing,  testing strategies, and the prevalence of community transmissions \citep{Goldhaber-Fiebert2020,ziauddeen2020}.  We do not investigate how the association between school openings and case growths depends on contact tracing and testing strategies at the county level due to data limitation.
+
+The result on the association between school opening and death growth in Fig. \ref{fig:sensitivity-death} is suggestive but must be viewed with caution. The time lag between infection and death is stochastic and spreads over time, making it challenging to uncover the relationship between the timing of school openings and subsequent deaths.  Furthermore, while we provide sensitivity analysis for handling zero weekly deaths to approximate death growth, our construction of the death growth outcome variable remains somewhat arbitrary. %
+
+Finally, our result \textit{does not} imply that K-12 schools should be closed. Closing schools can have negative impacts on children's learning \citep{Engzelle2021} and may cause declining physical and mental health among children and their parents \citep{TAKAKU2021,Fordn614,Gadermanne042871}. On the other hand,
+there is emerging evidence of long-term harm on children's health induced by COVID  \citep{parcha2021}.
+The decision to open or close K-12 schools requires careful assessments of the cost and the benefit by policymakers. However,  given their relatively low implementation costs,  our findings strongly support policies that enforce masking and other precautionary actions at school and prioritizing vaccines for education workers and elderly parents/grandparents.
+ 
+\begin{table}[!htbp] \centering
+ \caption{The Predictive Effects (Association) of School/College Openings  on Full-time Workplace Visits and Staying Home   in the United States: Standard Fixed Effects Estimator without Bias Correction}\vspace{-0.3cm}
+ \label{tab:PItoB}
+ \smallskip
+\resizebox{0.99\columnwidth}{!}{
+%\begin{minipage}{\linewidth}
+ %       \begin{tabular}{c}
+   %     \textbf{(a) Full-time Workplace  Visits and Staying Home Devices}\\
+ \begin{tabular}{@{\extracolsep{1pt}}lcc|cc}
+\\[-1.8ex]\hline
+\hline
+ & \multicolumn{4}{c}{\textit{Dependent variable}} \\
+\cline{2-5}
+ & Full Time  & Full Time  &Stay Home& Stay Home \\
+  & (1) & (2) & (3) & (4)\\
+\hline \\[-1.8ex]
+  K-12 School Visits & 0.085$^{***}$ &  & $-$0.019 &  \\
+  & (0.006) &  & (0.026) &  \\
+  Open K-12 In-person &  & 0.999$^{***}$ &  & $-$0.924$^{**}$ \\
+  &  & (0.125) &  & (0.382) \\
+  Open K-12 Hybrid &  & 0.490$^{***}$ &  & $-$0.127 \\
+  &  & (0.051) &  & (0.186) \\
+  Open K-12 Remote &  & 0.236$^{***}$ &  & $-$0.271 \\
+  &  & (0.048) &  & (0.307) \\ \hline
+  College Visits & $-$0.040$^{***}$ & $-$0.046$^{***}$ & $-$0.144$^{***}$ & $-$0.148$^{***}$ \\
+  & (0.004) & (0.006) & (0.024) & (0.026) \\
+ Mandatory mask & $-$0.057 & $-$0.141$^{**}$ & 0.016 & 0.036 \\
+  & (0.042) & (0.053) & (0.259) & (0.250) \\
+  Ban gatherings & 0.060 & 0.075 & 0.436 & 0.351 \\
+  & (0.047) & (0.051) & (0.560) & (0.520) \\
+  Stay at Home & $-$0.060$^{*}$ & $-$0.066$^{*}$ & 2.793$^{***}$ & 2.809$^{***}$ \\
+  & (0.031) & (0.033) & (0.329) & (0.340) \\ \hline
+  log(Cases) & 0.005 & 0.003 & 0.288$^{***}$ & 0.282$^{***}$ \\
+  & (0.004) & (0.005) & (0.028) & (0.028) \\
+  llog(Cases), 7d lag & $-$0.001 & $-$0.005$^{*}$ & 0.209$^{***}$ & 0.207$^{***}$ \\
+  & (0.002) & (0.003) & (0.019) & (0.017) \\
+log(Cases), 14d lag & $-$0.0005 & $-$0.003 & 0.098$^{***}$ & 0.097$^{***}$ \\
+  & (0.002) & (0.002) & (0.023) & (0.024) \\ 
+   \hline \\[-1.8ex]
+Observations & 670,895 & 595,872 & 670,895 & 595,872 \\
+R$^{2}$ & 0.870 & 0.853 & 0.889 & 0.888 \\
+\hline
+\hline \\[-1.8ex]  
+\end{tabular}
+}
+{\scriptsize \begin{flushleft}
+Notes:  Dependent variables are full-time workplace visits and staying home devices per residing device. All regression specifications include county fixed effects and state-week fixed effects. The standard fixed effects estimator without bias correction is used. Clustered standard errors at the state level are reported in the bracket.  {$^{*}$p$<$0.1; $^{**}$p$<$0.05; $^{***}$p$<$0.01}
+\end{flushleft}}
+\end{table}
+
+\begin{table}[!htbp] \centering
+ \caption{The Predictive Effects (Association) of School/College Opening, Full-time/Part-time Work, and Staying Home on Case Growth in the United States: Debiased  Estimator}\vspace{-0.3cm}
+ \label{tab:PBItoY}
+\resizebox{0.99\columnwidth}{!}{
+\begin{tabular}{@{\extracolsep{1pt}}lcc|cc}
+\\[-1.8ex]\hline
+\hline \\ [-1.8ex]
+ & \multicolumn{4}{c}{\textit{Dependent variable:  \textbf{Case Growth Rates}}} \\
+\cline{2-5}
+ %& \multicolumn{2}{c|}{\textit{State $\times$ Month FE}} & \multicolumn{2}{c}{\textit{State $\times$ Week FE}} \\ % [-1.8ex]
+ % & \multicolumn{4}{c}{$\Delta \log \Delta C_{it}$} \\
+%\\[-1.8ex]
+& (1) & (2) & (3) & (4)\\
+\hline %\\[-1.8ex]
+% College Visits, 14d  lag  & 0.060 & 0.012 & 0.114$^{*}$ & 0.010 \\
+%  & (0.071) & (0.072) & (0.065) & (0.075) \\
+   K-12 Visits, 14d  lag & 0.393$^{***}$ & 0.283$^{***}$ &  &  \\
+  & (0.075) & (0.087) &  &  \\
+   K-12 Visits $\times$ No-Mask, 14d  lag &  & 0.287$^{***}$ &  &  \\
+  &  & (0.071) &  &  \\
+  K-12  In-person, 14d  lag&  &  & 0.015 & $-$0.007 \\
+  &  &  & (0.016) & (0.020) \\
+  K-12  Hybrid, 14d  lag &  &  & $-$0.028$^{**}$ & $-$0.055$^{***}$ \\
+  &  &  & (0.013) & (0.013) \\
+  K-12  Remote, 14d  lag &  &  & $-$0.094$^{***}$ & $-$0.115$^{***}$ \\
+  &  &  & (0.015) & (0.014) \\
+  K-12   In-person $\times$ No-Mask, 14d  lag &  &  &  & 0.034$^{*}$ \\
+  &  &  &  & (0.020) \\
+  K-12   Hybrid $\times$ No-Mask, 14d  lag &  &  &  & 0.043$^{***}$ \\
+  &  &  &  & (0.017) \\ \hline
+  Full-time Work Device, 14d  lag& $-$0.117 & 0.186 & 0.956$^{**}$ & 0.967$^{**}$ \\
+  & (0.417) & (0.490) & (0.384) & (0.436) \\
+ Part-time Work Device, 14d  lag & 0.262 & 0.466 & 0.820$^{***}$ & 0.915$^{***}$ \\
+  & (0.259) & (0.305) & (0.276) & (0.309) \\
+ Staying Home Device, 14d  lag& $-$0.290$^{***}$ & $-$0.283$^{***}$ & $-$0.352$^{***}$ & $-$0.332$^{***}$ \\
+  & (0.057) & (0.069) & (0.061) & (0.067) \\ \hline 
+Observations & 690,297 & 545,131 & 612,963 & 528,941 \\
+R$^{2}$ & 0.092 & 0.093 & 0.092 & 0.094 \\
+\hline
+\hline % \\[-1.8ex]  %& \multicolumn{4}{r}
+\end{tabular}}
+  {\scriptsize
+\begin{flushleft}
+Notes: Dependent variable is the log difference over 7 days in weekly positive cases. All regression specifications include county fixed effects and state-week fixed effects, college visits, three NPIs, and 2, 3, and 4 weeks lagged log of cases. See SI Appendix, Table S8 for the estimated coefficients for NPIs and the log of current and past cases.
+The debiased fixed effects estimator is applied.  Asymptotic clustered standard errors at the state level are reported in the bracket.  {$^{*}$p$<$0.1; $^{**}$p$<$0.05; $^{***}$p$<$0.01}
+\end{flushleft}}
+\end{table}
+ 
+\showmatmethods{} % Display the Materials and Methods section
+
+\acknow{We are very grateful to the Editor and two anonymous referees whose comments results in many improvements relative to the original version.
+We also thank Emily Oster for helpful comments.}
+
+\showacknow{} % Display the acknowledgments section
+
+% Bibliography
+\bibliography{covid}
+
+\end{document}

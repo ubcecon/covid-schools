@@ -1,0 +1,1811 @@
+---
+title       : "Covid - County Analysis"
+subtitle    : "Schools Reopening"
+author      :  Victor Chernozhukov, Hiro Kasahara, Paul Schrimpf
+job         :
+date        : "`r format(Sys.time(), '%d %B, %Y')`"
+bibliography: "covid.bib"
+link-citations: true
+always_allow_html: true
+output      :
+    html_document :
+        toc : true
+        toc_depth : 3
+        toc_float : true
+        number_sections : true
+        #theme : journal
+        code_folding: hide
+        self_contained : true
+        fig_width: 8
+        fig_height: 6
+---
+
+```{r, include=FALSE}
+options(knitr.table.format = function() {
+  if (knitr::is_latex_output()) 'latex' else 'pandoc'
+})
+if (knitr::is_latex_output()) {
+  knitr::opts_chunk$set(warning=FALSE, message=FALSE, echo=FALSE)
+}
+```
+
+# Data Preparation
+```{r setup, cache=FALSE, warning=FALSE, include=FALSE}
+
+library(lfe)
+library(stargazer)
+library(knitr)
+library(plm)
+library(latex2exp)
+library(ggplot2)
+library(ggthemes)
+library(mvtnorm)
+library(kableExtra)
+library(data.table)
+sgtype <- opts_knit$get("rmarkdown.pandoc.to")
+sgstyle <- 'default'
+colors <-  scale_color_solarized
+colors_fill <- scale_fill_solarized
+rootdir <- system("git rev-parse --show-toplevel", intern=TRUE)[1]
+
+source(paste(rootdir,"R/countyData.R",sep="/"))
+source(paste(rootdir,"R/varlabels.R", sep="/"))
+source(paste(rootdir,"R/dataprep.R",sep="/"))
+countyvars <-
+  c("PopulationEstimate2018",
+    "PopulationDensityperSqMile2010",
+    "Smokers_Percentage",
+    "DiabetesPercentage",
+    "MedianAge2010",
+    "dem_to_rep_ratio",
+    "HPSAShortage")
+L.d <- 21
+L.c <- 14
+source(paste(rootdir,"rmd/generatetables.R",sep="/"))
+```
+
+
+```{r loaddata, cache=FALSE}
+df <- countyData(redo=FALSE)
+df <- dataprep(df)
+startdate  <- "2020-06-01"
+enddate  <- "2020-12-15"
+sdf <- subset(df, date>=startdate)
+sdf <- subset(sdf, date<=enddate)
+sdf <- subset(sdf, sdf$fips!=0)
+length(unique(sdf$fips))
+sdf <- as.data.frame(sdf)
+# remove(covidCounty)
+```
+
+For the analysis of school reopening, we focus on observations after
+July 1, 2020. There are `r length(unique(df$date))` days of
+observations from `r length(unique(df$fips))` counties.
+We have information on school district reopening for
+`r length(unique(sdf$fips))` of the counties.
+These counties constitute
+`r 100*sum(subset(sdf,date==startdate)$PopulationEstimate2018, na.rm=TRUE)/
+   sum(subset(df,date==startdate)$PopulationEstimate2018, na.rm=TRUE)`\% of the
+population. Throughout this document we limit the sample to these
+counties with school opening information.
+
+
+The data classifies school reopening plans into three categories:
+
+1. Full in-person
+2. Hybrid in-person and remote
+3. Remote
+
+The folowing figure shows the (unweighted) portion of counties with
+schools open by plan and day.
+
+```{r plotopening, eval=TRUE, cache=FALSE}
+startdates <- c("start.Full",
+                "start.Remote",
+                "start.Hybrid",
+                "start.Unknown")
+enddates <- rep(NA, 4)
+
+pvars <- c("In-person", "Remote", "Hybrid", "Unknown")
+for(i in 1:length(startdates)) sdf[,pvars[i]] <-
+                                 smoothedpolicy(sdf,startdates[i],enddatevar=enddates[i],type="ma",bw=1, id="fips")
+haveschool=apply(sdf, 1, function(row) any(!is.na(row[startdates])))
+portionnames  <- sub("start","portion",startdates[grep("start\\.",startdates)])
+for (i in 1:length(pvars)) {
+  sdf[,pvars[i]] <- sdf[,pvars[i]]*sdf[,portionnames[i]]
+  sdf[!haveschool,pvars[i]] <- NA
+}
+
+dt <- data.table(sdf)
+pvars <- c("In-person", "Remote", "Hybrid", "Unknown")
+figdata <- melt(dt[,lapply(.SD, mean, na.rm=TRUE), by=date,  .SDcols=pvars],
+                id.vars="date", variable.name="plan")
+fig  <-  ggplot(data=figdata, aes(x=date,y=value, colour=plan))  +
+    geom_line(aes(x=date,y=value, colour=plan) ,size=1.5)  +
+    xlim(c(as.Date("2020-07-01"), as.Date(enddate))) +
+  ylab("portion of counties") + figtheme + ggtitle("School reopening")
+pdf(sprintf("%s/tex/tables_and_figures/ew-opening.pdf",rootdir), width=7, height=3.5)
+print(fig)
+dev.off()
+
+dt <- data.table(sdf)
+pvars <- c("in-person", "remote", "hybrid")
+figdata <- melt(dt[,lapply(.SD, mean, na.rm=TRUE), by=date,  .SDcols=pvars],
+                id.vars="date", variable.name="plan")
+fig  <-  ggplot(data=figdata, aes(x=date,y=value, colour=plan))  +
+    geom_line(aes(x=date,y=value, colour=plan) ,size=1.5)  +
+    xlim(c(as.Date("2020-07-01"), as.Date(enddate))) +
+  ylab("portion of counties") + figtheme + ggtitle("School reopening")
+pdf(sprintf("%s/tex/tables_and_figures/ew-opening2.pdf",rootdir), width=7, height=3.5)
+print(fig)
+dev.off()
+
+pvars <- c("mask-mandate", "stay-at-home", "ban-gathering")
+dt[,"mask-mandate"] <- dt$pmask
+dt[,"stay-at-home"] <- dt$pshelter
+dt[,"ban-gathering"] <- dt$pgather50
+figdata <- melt(dt[,lapply(.SD, mean, na.rm=TRUE), by=date,  .SDcols=pvars],
+                id.vars="date", variable.name="policy")
+fig  <-  ggplot(data=figdata, aes(x=date,y=value, colour=policy))  +
+    geom_line(aes(x=date,y=value, colour=policy) ,size=1.5)   +
+    xlim(c(as.Date("2020-04-01"), as.Date(enddate))) +
+  ylab("portion of counties") + figtheme + ggtitle("County-level policies")
+pdf(sprintf("%s/tex/tables_and_figures/jyw-policy.pdf",rootdir), width=7, height=3.5)
+print(fig)
+dev.off()
+
+# dt <- data.table(sdf)
+# figdata <- melt(dt[,lapply(.SD, mean, na.rm=TRUE), by=date,  .SDcols=pvars],
+#                 id.vars="date", variable.name="plan")
+# fig  <-  ggplot(data=figdata, aes(x=date,y=value, colour=plan)) + geom_line() +
+#   ylab("portion of counties") + figtheme + ggtitle("School reopening")
+# print(fig)
+```
+
+
+```{r summary, eval=TRUE, cashe=FALSE}
+
+startdate  <- "2020-04-01"
+enddate  <- "2020-12-02"
+sdf <- subset(df, df$date>=as.Date(startdate))
+sdf <- subset(sdf, sdf$date<=as.Date(enddate))
+sdf <- subset(sdf, sdf$fips!=0)
+length(unique(sdf$fips))
+unique(sdf$date)
+sdf$pgather <- sdf$pgather50
+
+sdf <- as.data.frame(sdf)
+
+
+### Sample selection ###
+sdf$pschoolfull[sdf$portion.Unknown>0.5] <- NA
+sdf$pschoolhybrid[sdf$portion.Unknown>0.5] <- NA
+sdf$pschoolremote[sdf$portion.Unknown>0.5] <- NA
+sdf$staffmask.No[sdf$staffmask.Unknown>0.5] <- NA
+sdf$studentmask.No[sdf$studentmask.Unknown>0.5] <- NA
+sdf$studentmask.Yes[sdf$studentmask.Unknown>0.5] <- NA
+sdf$online.No[sdf$online.Unknown>0.5] <- NA
+sdf$online.Yes[sdf$online.Unknown>0.5] <- NA
+sdf$sports.No[sdf$sports.Unknown>0.5] <- NA
+sdf$sports.Yes[sdf$sports.Unknown>0.5] <- NA
+sdf$homeschool.No[sdf$homeschool.Unknown>0.5] <- NA
+sdf$homeschool.Yes[sdf$homeschool.Unknown>0.5] <- NA
+
+
+# q <- quantile(sdf$staffmask.No,prob=(0.5),na.rm=TRUE)
+q <- 0
+sdf$staff_dum <- sdf$staffmask.No
+sdf$staff_dum[sdf$staffmask.No>q] <- 1
+sdf$staff_dum[sdf$staffmask.No<=q] <- 0
+sdf$staff_dum[is.na(sdf$staffmask.No)] <- NA
+sdf$school_staff_dum <- sdf$staff_dum*sdf$school
+sdf$full_staff_dum <- sdf$staff_dum*sdf$pschoolfull
+sdf$hybrid_staff_dum <- sdf$staff_dum*sdf$pschoolhybrid
+
+
+# assign school opening status
+startdates <- c("start.Full",
+                "start.Remote",
+                "start.Hybrid",
+                "start.Unknown")
+enddates <- rep(NA, 4)
+pvars <- c("In-person", "Remote", "Hybrid", "Unknown")
+portionnames  <- sub("start","portion",startdates[grep("start\\.",startdates)])
+dt <- data.table(sdf)
+sdf$plan <- max.col(dt[,..portionnames])
+sdf$plan <- pvars[sdf$plan]
+
+
+pols  <-  c("college","school","pschoolfull","pschoolhybrid","pschoolremote","staff_dum","pmask","pgather50","pshelter")
+bvars <- c("fullwork","partwork","home","bar","restaurant","gym","church")
+xvars <- c("dlogtests","pop")
+yvars <- c("dlogdc","dlogdd","dcase_capita","ddeath_capita")
+sdf$pop <- sdf$PopulationEstimate2018/1000000
+
+# all sample
+sdf2 <- subset(sdf, sdf$date>=as.Date("2020-04-15"))
+sdf2 <- sdf2[,c(yvars,pols,bvars,xvars)]
+tbl <- stargazer(sdf2)
+texfile <- sprintf("%s/tex/tables_and_figures/summary.tex",rootdir)
+cat(paste(tbl[c(-1,-2,-3,-4, -length(tbl))], collapse="\n"), file=texfile)
+
+vars <- c("dlogdc","dlogdd","dcase_capita","ddeath_capita","school","fullwork","restaurant")
+
+# full before opening
+ddtable <- function(sdate, plan, data=sdf, variables=vars) {
+  sdf2 <- subset(data, !is.na(data[,sdate]))
+  sdf2 <- sdf2[sdf2$plan==plan,]
+  sdf2$open <- as.numeric(sdf2$date) >= as.numeric(as.Date(sdf2[,sdate]))
+  sdf2 <- sdf2[,c("fips","date","open",variables)]
+  foo <- function(v) {
+    fmla <- as.formula(paste(v,"~ open - 1| 0 | 0 | fips + date"))
+    rm <- felm(fmla, data=sdf2)
+    fmla <- as.formula(paste(v,"~ open | 0 | 0 | fips + date"))
+    rd <- felm(fmla, data=sdf2)
+    means <- c(rm$coefficients, rd$coefficients[2])
+    names(means) <- c("Before","After","Difference")
+    se <- sqrt(c(diag(rm$clustervcv) , rd$clustervcv[2,2]))
+    n <- c(sum(!is.na(sdf2[ ,v]) & !sdf2$open), sum(!is.na(sdf2[,v]) & sdf2$open), NA)
+    return(list(mean=means,se=se,n=n))
+  }
+  out <- sapply(vars,foo)
+  rownames(out) <- c("Mean","SE","N")
+  return(out)
+}
+
+tablefragment <- function(out) {
+  cols <- 1:ncol(out)
+
+  tablesubfragment <- function(out, j) {
+    tbl <- c(paste( c("\\qquad\\quad Mean",
+                        sapply(cols, function(i) sprintf("%.2g",out[1,i][[1]][j]))),
+                     collapse=" & "), "\\\\\n")
+    tbl <- c(tbl,paste(c(" ",
+                         sapply(cols, function(i) sprintf("(%.2g)",out[2,i][[1]][j]))),
+                       collapse=" & "), "\\\\\n")
+    if (j<3)
+      tbl <- c(tbl, paste(c("\\qquad\\quad N",
+                            sapply(cols, function(i) sprintf("%d",out[3,i][[1]][j]))),
+                          collapse=" & "), "\\\\\n")
+    return(paste(tbl, collapse=" "))
+  }
+  tbl <- "\\qquad Before Opening \\\\\n"
+  tbl <- c(tbl, tablesubfragment(out, 1))
+  tbl <- c(tbl,"\\qquad After Opening \\\\\n")
+  tbl <- c(tbl, tablesubfragment(out, 2))
+  tbl <- c(tbl,"\\qquad Difference \\\\\n")
+  tbl <- c(tbl, tablesubfragment(out, 3))
+  return(paste(tbl,collapse=""))
+}
+
+tbl <- "\\begin{tabular}{@{\\extracolsep{5pt}}lccccccc}
+\\\\[-1.8ex]\\hline
+\\hline \\\\
+  & Case  & Death  & Cases & Deaths & K-12 Sch. & Workplace   & Restaurant  \\\\
+  &  Growth &  Growth & per 1000 & per 1000 &  Visits &  Visits & Visits \\\\ \\hline
+"
+
+out <- ddtable("start.Full","In-person")
+tbl <- paste(tbl,"In-person \\\\\n",tablefragment(out),sep=" ")
+out <- ddtable("start.Hybrid","Hybrid")
+tbl <- paste(tbl,"Hybrid \\\\\n",tablefragment(out),sep=" ")
+out <- ddtable("start.Remote","Remote")
+tbl <- paste(tbl,"Remote \\\\\n",tablefragment(out),sep=" ")
+tbl <- paste(tbl,"  \\hline \\\\[-1.8ex]\n\\end{tabular}
+", sep="\n")
+
+texfile <- sprintf("%s/tex/tables_and_figures/summary_plan.tex",rootdir)
+cat(tbl, file=texfile)
+
+
+
+
+pols  <-  c("college","school","pschoolfull","pschoolhybrid","pschoolremote","staff_dum","pmask","pgather50","pshelter")
+bvars <- c("fullwork","partwork","home","bar","restaurant","gym","church")
+xvars <- c("dlogtests","pop")
+yvars <- c("dlogdc","dlogdd","logdc","logdd")
+sdf$pop <- sdf$PopulationEstimate2018/1000000
+
+sdf2 <- subset(sdf, sdf$date>=as.Date("2020-04-15"))
+sdf2 <- sdf2[,c(yvars,pols,bvars,xvars)]
+tbl <- stargazer(sdf2)
+texfile <- sprintf("%s/tex/tables_and_figures/summary.tex",rootdir)
+cat(paste(tbl[c(-1,-2,-3,-4, -length(tbl))], collapse="\n"), file=texfile)
+
+sdf2 <- subset(sdf, sdf$date>=as.Date("2020-04-15"))
+cmat <-  cor(sdf2[,c(pols,bvars)], use="pairwise.complete.obs")
+scmat <- matrix(sprintf("%.2f",cmat),nrow=(length(pols)+length(bvars)))
+
+rownames(scmat) <- getlabel(rownames(cmat))
+colnames(scmat) <- getlabel(colnames(cmat))
+scmat[upper.tri(cmat)] <- ""
+
+ltbl <- knitr::kable(scmat, format="latex", booktabs=TRUE, escape=FALSE,
+              align=(rep("c",ncol(scmat)))) %>%
+  row_spec(0, angle = 90)
+cat(ltbl, file=paste(rootdir,"tex/tables_and_figures/corr.tex",sep="/"))
+
+
+
+# Correlation between mitigation plans
+# sdf$staffmask.No[sdf$staffmask.NA>0.5] <- NA
+# sdf$studentmask.No[sdf$studentmask.NA>0.5] <- NA
+# sdf$online.No[sdf$online.NA>0.5] <- NA
+# sdf$sports.Yes[sdf$sports.NA>0.5] <- NA
+# mvars <- c("studentmask.No","studentmask.Yes","sports.Yes","sports.No","online.No","online.Yes")
+# sdf2 <- subset(sdf, sdf$date==as.Date("2020-10-01")&sdf$staffmask.No>0) # cross-sectional correlation after school opening
+# sdf2 <- sdf2[,c(mvars)]
+# tbl_1 <- stargazer(sdf2, digits=3, flip= TRUE, summary.stat = c( "mean","sd","n") )
+# sdf2 <- subset(sdf, sdf$date==as.Date("2020-10-01")&sdf$staffmask.No==0) # cross-sectional correlation after school opening
+# sdf2 <- sdf2[,c(mvars)]
+# tbl_2 <- stargazer(sdf2, digits=3, flip= TRUE, summary.stat = c( "mean","sd","n") )
+
+#sdf$online.sum <- sdf$online.Yes+sdf$online.No
+mvars <- c("staffmask.No","studentmask.No","sports.Yes","online.No")
+sdf2 <- subset(sdf, sdf$date==as.Date("2020-10-01")) # cross-sectional correlation after school opening
+cmat <-  cor(sdf2[,mvars], use="pairwise.complete.obs")
+scmat <- matrix(sprintf("%.2f",cmat),nrow=(length(mvars)))
+
+rownames(scmat) <- getlabel(rownames(cmat))
+colnames(scmat) <- getlabel(colnames(cmat))
+scmat[upper.tri(cmat)] <- ""
+
+ltbl <- knitr::kable(scmat, format="latex", booktabs=TRUE, escape=FALSE,
+              align=(rep("c",ncol(scmat)))) %>%
+  row_spec(0, angle = 90)
+cat(ltbl, file=paste(rootdir,"tex/tables_and_figures/corr-mitigation.tex",sep="/"))
+
+
+library(Hmisc)
+# for p-value and sample size
+res<-rcorr(as.matrix(sdf2[,mvars]))
+res
+
+# sdf2 <- subset(sdf, sdf$date==as.Date("2020-10-01")&sdf$plan=="In-person") # cross-sectional correlation after school opening
+# cmat_1 <-  cor(sdf2[,mvars], use="pairwise.complete.obs")
+# sdf2 <- subset(sdf, sdf$date==as.Date("2020-10-01")&sdf$plan=="Hybrid") # cross-sectional correlation after school opening
+# cmat_2 <-  cor(sdf2[,mvars], use="pairwise.complete.obs")
+
+
+
+```
+
+```{r ddplot-day,  eval=TRUE, cache=FALSE}
+
+
+# subsetting to counties with all school districts open at the same time
+# look at the daily data rather than the weekly average data for school and full-time workplaces
+
+
+thm <-  theme(legend.text = element_text(size = 22), title = element_text(size=22, face='bold'),legend.position = c(0.23, 0.83),
+              axis.text.x = element_text(size = 22, face='bold'), axis.text.y = element_text(size = 22, face='bold'),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_rect(fill = "transparent",colour = NA),
+        plot.background = element_rect(fill = "transparent",colour = NA))
+
+startdate  <- "2020-06-01"
+sdf <- as.data.frame(subset(df, date>=startdate))
+
+
+startdates <- c("start.Full",
+                "start.Remote",
+                "start.Hybrid",
+                "start.Unknown")
+enddates <- rep(NA, 4)
+pvars <- c("In-person", "Remote", "Hybrid", "Unknown")
+portionnames  <- sub("start","portion",startdates[grep("start\\.",startdates)])
+dt <- data.table(sdf)
+sdf$plan <- max.col(dt[,..portionnames])
+schoolstart <- as.Date(rep(NA, nrow(sdf)))
+for (i in 1:length(pvars)) {
+  schoolstart[!is.na(sdf$plan) & sdf$plan==i] <- sdf[!is.na(sdf$plan) & sdf$plan==i, startdates[i]]
+}
+dt$daysopen <- round(as.numeric(dt$date - schoolstart, units="days"))
+dt$daysopen_week <- round(as.numeric(dt$date - schoolstart-4, units="days"))
+
+dt$plan <- pvars[sdf$plan]
+
+j_1 <- which(!is.na(dt$start.Full)&!is.na(dt$start2.Full)&(as.numeric(dt$start.Full) == as.numeric(dt$start2.Full))&dt$plan=="In-person")
+j_2 <- which(!is.na(dt$start.Remote)&!is.na(dt$start2.Remote)&(as.numeric(dt$start.Remote) == as.numeric(dt$start2.Remote))&dt$plan=="Remote")
+j_3 <- which(!is.na(dt$start.Hybrid)&!is.na(dt$start2.Hybrid)&(as.numeric(dt$start.Hybrid) == as.numeric(dt$start2.Hybrid))&dt$plan=="Hybrid")
+length(unique(dt$fips[j_1]))
+length(unique(dt$fips[j_2]))
+length(unique(dt$fips[j_3]))
+
+j <- c(j_1,j_2,j_3)
+dt$sd <- 0
+dt$sd[j] <-1
+length(unique(dt$fips[dt$sd==1]))
+
+dt2 <- dt
+
+dt <- dt2
+dt$plan[dt$staffmask.No>0&dt$plan=="In-person"] <- "In-person/No-Mask"
+dt$plan[dt$staffmask.No>0&dt$plan=="Hybrid"] <- "Hybrid/No-Mask"
+dt$plan[dt$staffmask.No==0&dt$plan=="In-person"] <- "In-person/Yes-Mask"
+dt$plan[dt$staffmask.No==0&dt$plan=="Hybrid"] <- "Hybrid/Yes-Mask"
+
+dt$school_rel  <- dt$school
+dt$plan_factor <- as.factor(dt$plan)
+dt$plan_factor <- relevel(dt$plan_factor, "Hybrid/Yes-Mask")
+dt$plan_factor <- relevel(dt$plan_factor, "Hybrid/No-Mask")
+dt$plan_factor <- relevel(dt$plan_factor, "In-person/Yes-Mask")
+dt$plan_factor <- relevel(dt$plan_factor, "In-person/No-Mask")
+
+dt <- subset(dt, dt$plan!="Unknown")
+
+adf <- aggregate(dcase_capita_day ~ as.factor(daysopen)*plan_factor, data=dt[dt$sd==1], FUN=mean)
+names(adf) <- c("daysopen","plan","dcase_capita")
+adf$daysopen <- as.numeric(levels(adf$daysopen)[adf$daysopen])
+fig <- ggplot(adf, aes(x=daysopen, y=dcase_capita, colour=plan)) + geom_line() + thm +
+  # xlim(c(-50,max(adf$daysopen))) +
+  geom_line(aes(color = plan) ,size=1)+
+  ylim(c(-0,8/7)) +
+  scale_x_continuous(breaks=c(-20,0,20, 40, 60 , 80),limits=c(-30,90)) +
+  #xlim(c(-30,90)) +
+geom_vline(xintercept = 0, linetype="dashed", size=1) +
+  #ggtitle("New cases per 1000 and days open") +
+  ylab("Weekly Cases Per 1000") +  xlab("Days since School Opening")
+pdf(sprintf("%s/tex/tables_and_figures/schoolmode-event-staff-newcases-day.pdf",rootdir), width=8, height=6)
+# png("event-newcases.png")
+print(fig)
+dev.off()
+
+adf <- aggregate(ddeath_capita_day ~ as.factor(daysopen)*plan_factor, data=dt[dt$sd==1], FUN=mean)
+names(adf) <- c("daysopen","plan","ddeath_capita")
+adf$daysopen <- as.numeric(levels(adf$daysopen)[adf$daysopen])
+fig <- ggplot(adf, aes(x=daysopen, y=ddeath_capita, colour=plan)) + geom_line() + thm +
+  # xlim(c(-50,max(adf$daysopen))) +
+  geom_line(aes(color = plan) ,size=1)+
+  ylim(c(-0,0.18/7)) +
+geom_vline(xintercept = 0, linetype="dashed", size=1) +
+  scale_x_continuous(breaks=c(-20,0,20, 40, 60 , 80),limits=c(-30,90)) +
+  #ggtitle("New deaths per 1000 and days open") +
+  ylab("Weekly Deaths Per 1000") +  xlab("Days since School Opening")
+pdf(sprintf("%s/tex/tables_and_figures/schoolmode-event-staff-newdeaths-day.pdf",rootdir), width=8, height=6)
+#png("event-newdeaths.png")
+print(fig)
+dev.off()
+
+
+# Event-study type regression with daily data
+
+adf <- aggregate(school_day ~ as.factor(daysopen)*plan_factor, data=dt[dt$sd==1], FUN=mean)
+names(adf) <- c("daysopen","plan","school_rel")
+adf$daysopen <- as.numeric(levels(adf$daysopen)[adf$daysopen])
+fig <- ggplot(adf, aes(x=daysopen, y=school_rel, colour=plan)) +
+    thm + # figtheme +
+  # xlim(c(-30,124)) +
+  ylim(c(0,0.25)) +
+  geom_line(aes(color = plan) ,size=1) +
+geom_vline(xintercept = 0, linetype="dashed", size=1) +
+  scale_x_continuous(breaks=c(-20,0,20,40, 60 , 80),limits=c(-30,90)) +
+     theme(legend.position = c(0.73,0.2)) +
+  ylab("K-12 School Visits / Device") +  xlab("Days since School Opening")
+pdf(sprintf("%s/tex/tables_and_figures/schoolmode-event-staff-school-day.pdf",rootdir), width=8, height=6)
+print(fig)
+dev.off()
+
+adf <- aggregate(fullwork_day ~ as.factor(daysopen)*plan_factor, data=dt[dt$sd==1], FUN=mean)
+names(adf) <- c("daysopen","plan","fullwork")
+adf$daysopen <- as.numeric(levels(adf$daysopen)[adf$daysopen])
+fig <- ggplot(adf, aes(x=daysopen, y=fullwork, colour=plan)) +
+    thm +
+  ylim(c(0,0.11)) +
+  geom_line(aes(color = plan) ,size=1)+
+geom_vline(xintercept = 0, linetype="dashed", size=1) +
+  scale_x_continuous(breaks=c(-20,0,20,40, 60 , 80),limits=c(-30,90)) +
+   theme(legend.position = c(0.73,0.2)) +
+  ylab("Full Time Work / Device") +  xlab("Days since School Opening")
+pdf(sprintf("%s/tex/tables_and_figures/schoolmode-event-fullwork-day.pdf",rootdir), width=8, height=6)
+print(fig)
+dev.off()
+
+
+adf <- aggregate(home_day ~ as.factor(daysopen)*plan_factor, data=dt[dt$sd==1], FUN=mean)
+names(adf) <- c("daysopen","plan","home")
+adf$daysopen <- as.numeric(levels(adf$daysopen)[adf$daysopen])
+fig <- ggplot(adf, aes(x=daysopen, y=home, colour=plan)) +
+    thm +
+  #ylim(c(0,0.26)) +
+  ylim(c(0,0.4)) +
+  geom_line(aes(color = plan) ,size=1)+
+geom_vline(xintercept = 0, linetype="dashed", size=1) +
+  scale_x_continuous(breaks=c(-20,0,20,40, 60 , 80),limits=c(-30,90)) +
+   theme(legend.position = c(0.73,0.33)) +
+  ylab("Stay Home / Device") +  xlab("Days since School Opening")
+pdf(sprintf("%s/tex/tables_and_figures/schoolmode-event-home-day.pdf",rootdir), width=8, height=6)
+print(fig)
+dev.off()
+
+
+```
+
+Generating plots for evolution of variables using weekly smoothed data.
+
+```{r ddplot,  eval=TRUE, cache=FALSE}
+
+thm <-  theme(legend.text = element_text(size = 22), title = element_text(size=22, face='bold'),legend.position = c(0.23, 0.83),
+              axis.text.x = element_text(size = 22, face='bold'), axis.text.y = element_text(size = 22, face='bold'),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_rect(fill = "transparent",colour = NA),
+        plot.background = element_rect(fill = "transparent",colour = NA))
+
+startdate  <- "2020-06-01"
+sdf <- as.data.frame(subset(df, date>=startdate))
+
+startdates <- c("start.Full",
+                "start.Remote",
+                "start.Hybrid",
+                "start.Unknown")
+enddates <- rep(NA, 4)
+pvars <- c("In-person", "Remote", "Hybrid", "Unknown")
+portionnames  <- sub("start","portion",startdates[grep("start\\.",startdates)])
+dt <- data.table(sdf)
+sdf$plan <- max.col(dt[,..portionnames])
+schoolstart <- as.Date(rep(NA, nrow(sdf)))
+for (i in 1:length(pvars)) {
+  schoolstart[!is.na(sdf$plan) & sdf$plan==i] <- sdf[!is.na(sdf$plan) & sdf$plan==i, startdates[i]]
+}
+dt$daysopen <- round(as.numeric(dt$date - schoolstart - 4, units="days")) # taking into account of the middle of 7-day moving average
+dt$plan <- pvars[sdf$plan]
+
+j_1 <- which(!is.na(dt$start.Full)&!is.na(dt$start2.Full)&(as.numeric(dt$start.Full) == as.numeric(dt$start2.Full))&dt$plan=="In-person")
+j_2 <- which(!is.na(dt$start.Remote)&!is.na(dt$start2.Remote)&(as.numeric(dt$start.Remote) == as.numeric(dt$start2.Remote))&dt$plan=="Remote")
+j_3 <- which(!is.na(dt$start.Hybrid)&!is.na(dt$start2.Hybrid)&(as.numeric(dt$start.Hybrid) == as.numeric(dt$start2.Hybrid))&dt$plan=="Hybrid")
+j <- c(j_1,j_2,j_3)
+dt$sd <- 0
+dt$sd[j] <-1
+length(unique(dt$fips[dt$sd==1]))
+
+
+dt2 <- dt
+
+######### No Staff Mask  ######
+dt <- dt2
+dt$plan[dt$staffmask.No>0&dt$plan=="In-person"] <- "In-person/No-Mask"
+dt$plan[dt$staffmask.No>0&dt$plan=="Hybrid"] <- "Hybrid/No-Mask"
+dt$plan[dt$staffmask.No==0&dt$plan=="In-person"] <- "In-person/Yes-Mask"
+dt$plan[dt$staffmask.No==0&dt$plan=="Hybrid"] <- "Hybrid/Yes-Mask"
+
+dt$school_rel  <- dt$school
+dt$plan_factor <- as.factor(dt$plan)
+dt$plan_factor <- relevel(dt$plan_factor, "Hybrid/Yes-Mask")
+dt$plan_factor <- relevel(dt$plan_factor, "Hybrid/No-Mask")
+dt$plan_factor <- relevel(dt$plan_factor, "In-person/Yes-Mask")
+dt$plan_factor <- relevel(dt$plan_factor, "In-person/No-Mask")
+
+dt <- subset(dt, dt$plan!="Unknown")
+
+adf <- aggregate(school ~ as.factor(daysopen)*plan_factor, data=dt, FUN=mean)
+names(adf) <- c("daysopen","plan","school_rel")
+adf$daysopen <- as.numeric(levels(adf$daysopen)[adf$daysopen])
+fig <- ggplot(adf, aes(x=daysopen, y=school_rel, colour=plan)) +
+    thm + # figtheme +
+  # xlim(c(-30,124)) +
+  ylim(c(0,0.26)) +
+  geom_line(aes(color = plan) ,size=2)+
+geom_vline(xintercept = 0, linetype="dashed", size=1) +
+  scale_x_continuous(breaks=c(-20,0,20,40, 60 , 80),limits=c(-30,90)) +
+  ylab("K-12 School Visits / Device") +  xlab("Days since School Opening")
+pdf(sprintf("%s/tex/tables_and_figures/schoolmode-event-staff-school.pdf",rootdir), width=8, height=6)
+print(fig)
+dev.off()
+
+adf <- aggregate(dcase_capita ~ as.factor(daysopen)*plan_factor, data=dt, FUN=mean)
+names(adf) <- c("daysopen","plan","dcase_capita")
+adf$daysopen <- as.numeric(levels(adf$daysopen)[adf$daysopen])
+fig <- ggplot(adf, aes(x=daysopen, y=dcase_capita, colour=plan)) + geom_line() + thm +
+  # xlim(c(-50,max(adf$daysopen))) +
+  geom_line(aes(color = plan) ,size=2)+
+  ylim(c(-0,8)) +
+  scale_x_continuous(breaks=c(-20,0,20, 40, 60 , 80),limits=c(-30,90)) +
+  #xlim(c(-30,90)) +
+geom_vline(xintercept = 0, linetype="dashed", size=1) +
+  #ggtitle("New cases per 1000 and days open") +
+  ylab("Weekly Cases Per 1000") +  xlab("Days since School Opening")
+pdf(sprintf("%s/tex/tables_and_figures/schoolmode-event-staff-newcases.pdf",rootdir), width=8, height=6)
+# png("event-newcases.png")
+print(fig)
+dev.off()
+
+adf <- aggregate(ddeath_capita ~ as.factor(daysopen)*plan_factor, data=dt, FUN=mean)
+names(adf) <- c("daysopen","plan","ddeath_capita")
+adf$daysopen <- as.numeric(levels(adf$daysopen)[adf$daysopen])
+fig <- ggplot(adf, aes(x=daysopen, y=ddeath_capita, colour=plan)) + geom_line() + thm +
+  # xlim(c(-50,max(adf$daysopen))) +
+  geom_line(aes(color = plan) ,size=2)+
+  ylim(c(-0,0.18)) +
+geom_vline(xintercept = 0, linetype="dashed", size=1) +
+  scale_x_continuous(breaks=c(-20,0,20, 40, 60 , 80),limits=c(-30,90)) +
+  #ggtitle("New deaths per 1000 and days open") +
+  ylab("Weekly Deaths Per 1000") +  xlab("Days since School Opening")
+pdf(sprintf("%s/tex/tables_and_figures/schoolmode-event-staff-newdeaths.pdf",rootdir), width=8, height=6)
+#png("event-newdeaths.png")
+print(fig)
+dev.off()
+
+
+# effect on behavior
+adf <- aggregate(school ~ as.factor(daysopen)*plan_factor, data=dt, FUN=mean)
+names(adf) <- c("daysopen","plan","school")
+adf$daysopen <- as.numeric(levels(adf$daysopen)[adf$daysopen])
+fig <- ggplot(adf, aes(x=daysopen, y=school, colour=plan)) +
+    thm + # figtheme +
+  # xlim(c(-30,124)) +
+  ylim(c(0,0.29)) +
+  geom_line(aes(color = plan) ,size=2)+
+geom_vline(xintercept = 0, linetype="dashed", size=1) +
+  scale_x_continuous(breaks=c(-20,0,20,40, 60 , 80),limits=c(-30,90)) +
+  ylab("K-12 School Visits / Device") +  xlab("Days since School Opening")
+pdf(sprintf("%s/tex/tables_and_figures/schoolmode-event-school.pdf",rootdir), width=8, height=6)
+print(fig)
+dev.off()
+
+adf <- aggregate(restaurant ~ as.factor(daysopen)*plan_factor, data=dt, FUN=mean)
+names(adf) <- c("daysopen","plan","restaurant")
+adf$daysopen <- as.numeric(levels(adf$daysopen)[adf$daysopen])
+fig <- ggplot(adf, aes(x=daysopen, y=restaurant, colour=plan)) +
+    thm +
+  ylim(c(0,0.5)) +
+  geom_line(aes(color = plan) ,size=2)+
+geom_vline(xintercept = 0, linetype="dashed", size=1) +
+  scale_x_continuous(breaks=c(-20,0,20,40, 60 , 80),limits=c(-30,90)) +
+  ylab("Restanrant Visits / Device") +  xlab("Days since School Opening")
+pdf(sprintf("%s/tex/tables_and_figures/schoolmode-event-restaurant.pdf",rootdir), width=8, height=6)
+print(fig)
+dev.off()
+
+adf <- aggregate(gym ~ as.factor(daysopen)*plan_factor, data=dt, FUN=mean)
+names(adf) <- c("daysopen","plan","gym")
+adf$daysopen <- as.numeric(levels(adf$daysopen)[adf$daysopen])
+fig <- ggplot(adf, aes(x=daysopen, y=gym, colour=plan)) +
+    thm +
+  ylim(c(0,0.04)) +
+  geom_line(aes(color = plan) ,size=2)+
+geom_vline(xintercept = 0, linetype="dashed", size=1) +
+  scale_x_continuous(breaks=c(-20,0,20,40, 60 , 80),limits=c(-30,90)) +
+  ylab("Recreation Visits / Device") +  xlab("Days since School Opening")
+pdf(sprintf("%s/tex/tables_and_figures/schoolmode-event-recreation.pdf",rootdir), width=8, height=6)
+print(fig)
+dev.off()
+
+adf <- aggregate(church ~ as.factor(daysopen)*plan_factor, data=dt, FUN=mean)
+names(adf) <- c("daysopen","plan","church")
+adf$daysopen <- as.numeric(levels(adf$daysopen)[adf$daysopen])
+fig <- ggplot(adf, aes(x=daysopen, y=church, colour=plan)) +
+    thm +
+  #ylim(c(0,0.26)) +
+  ylim(c(0,0.06)) +
+  geom_line(aes(color = plan) ,size=2)+
+geom_vline(xintercept = 0, linetype="dashed", size=1) +
+  scale_x_continuous(breaks=c(-20,0,20,40, 60 , 80),limits=c(-30,90)) +
+  ylab("Church Visits / Device") +  xlab("Days since School Opening")
+pdf(sprintf("%s/tex/tables_and_figures/schoolmode-event-church.pdf",rootdir), width=8, height=6)
+print(fig)
+dev.off()
+
+adf <- aggregate(bar ~ as.factor(daysopen)*plan_factor, data=dt, FUN=mean)
+names(adf) <- c("daysopen","plan","bar")
+adf$daysopen <- as.numeric(levels(adf$daysopen)[adf$daysopen])
+fig <- ggplot(adf, aes(x=daysopen, y=bar, colour=plan)) +
+    thm +
+  #ylim(c(0,0.26)) +
+  ylim(c(0,0.04)) +
+  geom_line(aes(color = plan) ,size=2)+
+geom_vline(xintercept = 0, linetype="dashed", size=1) +
+  scale_x_continuous(breaks=c(-20,0,20,40, 60 , 80),limits=c(-30,90)) +
+  ylab("Bar Visits / Device") +  xlab("Days since School Opening")
+pdf(sprintf("%s/tex/tables_and_figures/schoolmode-event-bar.pdf",rootdir), width=8, height=6)
+print(fig)
+dev.off()
+
+
+
+adf <- aggregate(home ~ as.factor(daysopen)*plan_factor, data=dt, FUN=mean)
+names(adf) <- c("daysopen","plan","home")
+adf$daysopen <- as.numeric(levels(adf$daysopen)[adf$daysopen])
+fig <- ggplot(adf, aes(x=daysopen, y=home, colour=plan)) +
+    thm +
+  #ylim(c(0,0.26)) +
+  ylim(c(0,0.4)) +
+  geom_line(aes(color = plan) ,size=2)+
+geom_vline(xintercept = 0, linetype="dashed", size=1) +
+  scale_x_continuous(breaks=c(-20,0,20,40, 60 , 80),limits=c(-30,90)) +
+   theme(legend.position = c(0.73,0.33)) +
+  ylab("Stay Home / Device") +  xlab("Days since School Opening")
+pdf(sprintf("%s/tex/tables_and_figures/schoolmode-event-home.pdf",rootdir), width=8, height=6)
+print(fig)
+dev.off()
+
+
+adf <- aggregate(fullwork ~ as.factor(daysopen)*plan_factor, data=dt, FUN=mean)
+names(adf) <- c("daysopen","plan","fullwork")
+adf$daysopen <- as.numeric(levels(adf$daysopen)[adf$daysopen])
+fig <- ggplot(adf, aes(x=daysopen, y=fullwork, colour=plan)) +
+    thm +
+   ylim(c(0,0.095)) +
+  geom_line(aes(color = plan) ,size=2)+
+geom_vline(xintercept = 0, linetype="dashed", size=1) +
+  scale_x_continuous(breaks=c(-20,0,20,40, 60 , 80),limits=c(-30,90)) +
+   theme(legend.position = c(0.73,0.33)) +
+  ylab("Full Time Work / Device") +  xlab("Days since School Opening")
+pdf(sprintf("%s/tex/tables_and_figures/schoolmode-event-fullwork.pdf",rootdir), width=8, height=6)
+print(fig)
+dev.off()
+
+
+adf <- aggregate(partwork ~ as.factor(daysopen)*plan_factor, data=dt, FUN=mean)
+names(adf) <- c("daysopen","plan","partwork")
+adf$daysopen <- as.numeric(levels(adf$daysopen)[adf$daysopen])
+fig <- ggplot(adf, aes(x=daysopen, y=partwork, colour=plan)) +
+    thm +
+  #ylim(c(0,0.26)) +
+   ylim(c(0,0.15)) +
+  geom_line(aes(color = plan) ,size=2)+
+geom_vline(xintercept = 0, linetype="dashed", size=1) +
+  scale_x_continuous(breaks=c(-20,0,20,40, 60 , 80),limits=c(-30,90)) +
+   theme(legend.position = c(0.73,0.33)) +
+  ylab("Part Time Work / Device") +  xlab("Days since School Opening")
+pdf(sprintf("%s/tex/tables_and_figures/schoolmode-event-partwork.pdf",rootdir), width=8, height=6)
+print(fig)
+dev.off()
+
+
+
+######### No Staff Mask & No College ######
+# q <-quantile(df$college_feb, probs=0.9, na.rm = TRUE)
+# dt <- subset(dt, dt$college_feb<q)
+q <-quantile(dt$college_ma, probs=0.95, na.rm = TRUE)
+dt <- subset(dt, dt$college_ma<q)
+adf <- aggregate(school ~ as.factor(daysopen)*plan_factor, data=dt, FUN=mean)
+names(adf) <- c("daysopen","plan","school_rel")
+adf$daysopen <- as.numeric(levels(adf$daysopen)[adf$daysopen])
+fig <- ggplot(adf, aes(x=daysopen, y=school_rel, colour=plan)) +
+    thm + # figtheme +
+  # xlim(c(-30,124)) +
+  ylim(c(0,0.26)) +
+  geom_line(aes(color = plan) ,size=2)+
+geom_vline(xintercept = 0, linetype="dashed", size=1) +
+  scale_x_continuous(breaks=c(-20,0,20,40, 60 , 80),limits=c(-30,90)) +
+  ylab("K-12 School Visits / Device") +  xlab("Days since School Opening")
+pdf(sprintf("%s/tex/tables_and_figures/schoolmode-event-nc-staff-school.pdf",rootdir), width=8, height=6)
+print(fig)
+dev.off()
+
+adf <- aggregate(dcase_capita ~ as.factor(daysopen)*plan_factor, data=dt, FUN=mean)
+names(adf) <- c("daysopen","plan","dcase_capita")
+adf$daysopen <- as.numeric(levels(adf$daysopen)[adf$daysopen])
+fig <- ggplot(adf, aes(x=daysopen, y=dcase_capita, colour=plan)) + geom_line() + thm +
+  # xlim(c(-50,max(adf$daysopen))) +
+  geom_line(aes(color = plan) ,size=2)+
+  ylim(c(-0,8)) +
+  scale_x_continuous(breaks=c(-20,0,20, 40, 60 , 80),limits=c(-30,90)) +
+  #xlim(c(-30,90)) +
+geom_vline(xintercept = 0, linetype="dashed", size=1) +
+  #ggtitle("New cases per 1000 and days open") +
+  ylab("Weekly Cases Per 1000") +  xlab("Days since School Opening")
+pdf(sprintf("%s/tex/tables_and_figures/schoolmode-event-nc-staff-newcases.pdf",rootdir), width=8, height=6)
+# png("event-newcases.png")
+print(fig)
+dev.off()
+
+adf <- aggregate(ddeath_capita ~ as.factor(daysopen)*plan_factor, data=dt, FUN=mean)
+names(adf) <- c("daysopen","plan","ddeath_capita")
+adf$daysopen <- as.numeric(levels(adf$daysopen)[adf$daysopen])
+fig <- ggplot(adf, aes(x=daysopen, y=ddeath_capita, colour=plan)) + geom_line() + thm +
+  # xlim(c(-50,max(adf$daysopen))) +
+  geom_line(aes(color = plan) ,size=2)+
+  ylim(c(-0,0.18)) +
+geom_vline(xintercept = 0, linetype="dashed", size=1) +
+  scale_x_continuous(breaks=c(-20,0,20, 40, 60 , 80),limits=c(-30,90)) +
+  #ggtitle("New deaths per 1000 and days open") +
+  ylab("Weekly Deaths Per 1000") +  xlab("Days since School Opening")
+pdf(sprintf("%s/tex/tables_and_figures/schoolmode-event-nc-staff-newdeaths.pdf",rootdir), width=8, height=6)
+#png("event-newdeaths.png")
+print(fig)
+dev.off()
+
+
+adf <- aggregate(bar ~ as.factor(daysopen)*plan_factor, data=dt, FUN=mean)
+names(adf) <- c("daysopen","plan","bar")
+adf$daysopen <- as.numeric(levels(adf$daysopen)[adf$daysopen])
+fig <- ggplot(adf, aes(x=daysopen, y=bar, colour=plan)) +
+    thm +
+  #ylim(c(0,0.26)) +
+  ylim(c(0,0.04)) +
+  geom_line(aes(color = plan) ,size=2)+
+geom_vline(xintercept = 0, linetype="dashed", size=1) +
+  scale_x_continuous(breaks=c(-20,0,20,40, 60 , 80),limits=c(-30,90)) +
+  ylab("Bar Visits / Device") +  xlab("Days since School Opening")
+pdf(sprintf("%s/tex/tables_and_figures/schoolmode-event-nc-bar.pdf",rootdir), width=8, height=6)
+print(fig)
+dev.off()
+
+
+adf <- aggregate(home ~ as.factor(daysopen)*plan_factor, data=dt, FUN=mean)
+names(adf) <- c("daysopen","plan","home")
+adf$daysopen <- as.numeric(levels(adf$daysopen)[adf$daysopen])
+fig <- ggplot(adf, aes(x=daysopen, y=home, colour=plan)) +
+    thm +
+  #ylim(c(0,0.26)) +
+  ylim(c(0,0.4)) +
+  geom_line(aes(color = plan) ,size=2)+
+geom_vline(xintercept = 0, linetype="dashed", size=1) +
+  scale_x_continuous(breaks=c(-20,0,20,40, 60 , 80),limits=c(-30,90)) +
+   theme(legend.position = c(0.73,0.33)) +
+  ylab("Stay Home / Device") +  xlab("Days since School Opening")
+pdf(sprintf("%s/tex/tables_and_figures/schoolmode-event-nc-home.pdf",rootdir), width=8, height=6)
+print(fig)
+dev.off()
+
+adf <- aggregate(fullwork ~ as.factor(daysopen)*plan_factor, data=dt, FUN=mean)
+names(adf) <- c("daysopen","plan","fullwork")
+adf$daysopen <- as.numeric(levels(adf$daysopen)[adf$daysopen])
+fig <- ggplot(adf, aes(x=daysopen, y=fullwork, colour=plan)) +
+    thm +
+   ylim(c(0,0.095)) +
+  geom_line(aes(color = plan) ,size=2)+
+geom_vline(xintercept = 0, linetype="dashed", size=1) +
+  scale_x_continuous(breaks=c(-20,0,20,40, 60 , 80),limits=c(-30,90)) +
+   theme(legend.position = c(0.73,0.33)) +
+  ylab("Full Time Work / Device") +  xlab("Days since School Opening")
+pdf(sprintf("%s/tex/tables_and_figures/schoolmode-event-nc-fullwork.pdf",rootdir), width=8, height=6)
+print(fig)
+dev.off()
+
+
+
+
+#### Mask Requirement for Students ####
+dt <- dt2
+
+dt$plan[dt$studentmask.No>0&dt$plan=="In-person"] <- "In-person/No-Student-Mask"
+dt$plan[dt$studentmask.No>0&dt$plan=="Hybrid"] <- "Hybrid/No-Student-Mask"
+dt$plan[dt$studentmask.No==0&dt$plan=="In-person"] <- "In-person/Yes-Student-Mask"
+dt$plan[dt$studentmask.No==0&dt$plan=="Hybrid"] <- "Hybrid/Yes-Student-Mask"
+
+dt$school_rel  <- dt$school
+dt$plan_factor <- as.factor(dt$plan)
+dt$plan_factor <- relevel(dt$plan_factor, "Hybrid/Yes-Student-Mask")
+dt$plan_factor <- relevel(dt$plan_factor, "Hybrid/No-Student-Mask")
+dt$plan_factor <- relevel(dt$plan_factor, "In-person/Yes-Student-Mask")
+dt$plan_factor <- relevel(dt$plan_factor, "In-person/No-Student-Mask")
+
+dt <- subset(dt, dt$plan!="Unknown")
+
+
+adf <- aggregate(dlogdc ~ as.factor(daysopen)*plan_factor, data=dt, FUN=mean)
+names(adf) <- c("daysopen","plan","dlogdc")
+adf$daysopen <- as.numeric(levels(adf$daysopen)[adf$daysopen])
+fig <- ggplot(adf, aes(x=daysopen, y=dlogdc, colour=plan)) + geom_line() + thm +
+  # xlim(c(-50,max(adf$daysopen))) +
+  ylim(c(-0.2,0.3)) +
+  geom_line(aes(color = plan) ,size=2)+
+geom_vline(xintercept = 0, linetype="dashed", size=1) +
+  scale_x_continuous(breaks=c(-20,0,20,   40, 60 , 80),limits=c(-30,90)) +
+  # ggtitle("Mean case growth and days open")+
+  ylab("Mean Case Growth") +  xlab("Days since School Opening")
+pdf(sprintf("%s/tex/tables_and_figures/schoolmode-event-growth.pdf",rootdir), width=8, height=6)
+print(fig)
+# png("event-growth.png")
+dev.off()
+
+adf <- aggregate(dcase_capita ~ as.factor(daysopen)*plan_factor, data=dt, FUN=mean)
+names(adf) <- c("daysopen","plan","dcase_capita")
+adf$daysopen <- as.numeric(levels(adf$daysopen)[adf$daysopen])
+fig <- ggplot(adf, aes(x=daysopen, y=dcase_capita, colour=plan)) + geom_line() + thm +
+  # xlim(c(-50,max(adf$daysopen))) +
+  geom_line(aes(color = plan) ,size=2)+
+  ylim(c(-0,8)) +
+  scale_x_continuous(breaks=c(-20,0,20, 40, 60 , 80),limits=c(-30,90)) +
+  #xlim(c(-30,90)) +
+geom_vline(xintercept = 0, linetype="dashed", size=1) +
+  #ggtitle("New cases per 1000 and days open") +
+  ylab("Weekly Cases Per 1000") +  xlab("Days since School Opening")
+pdf(sprintf("%s/tex/tables_and_figures/schoolmode-event-newcases.pdf",rootdir), width=8, height=6)
+# png("event-newcases.png")
+print(fig)
+dev.off()
+
+adf <- aggregate(ddeath_capita ~ as.factor(daysopen)*plan_factor, data=dt, FUN=mean)
+names(adf) <- c("daysopen","plan","ddeath_capita")
+adf$daysopen <- as.numeric(levels(adf$daysopen)[adf$daysopen])
+fig <- ggplot(adf, aes(x=daysopen, y=ddeath_capita, colour=plan)) + geom_line() + thm +
+  # xlim(c(-50,max(adf$daysopen))) +
+  geom_line(aes(color = plan) ,size=2)+
+  ylim(c(-0,0.18)) +
+geom_vline(xintercept = 0, linetype="dashed", size=1) +
+  scale_x_continuous(breaks=c(-20,0,20, 40, 60 , 80),limits=c(-30,90)) +
+  #ggtitle("New deaths per 1000 and days open") +
+  ylab("Weekly Deaths Per 1000") +  xlab("Days since School Opening")
+pdf(sprintf("%s/tex/tables_and_figures/schoolmode-event-newdeaths.pdf",rootdir), width=8, height=6)
+#png("event-newdeaths.png")
+print(fig)
+dev.off()
+
+
+
+
+#### Yes Sports Activity  and No Online Instruction Increase ####
+dt <- dt2
+dt$plan[dt$sports.Yes>0&dt$plan=="In-person"] <- "In-person/Yes-Sports"
+dt$plan[dt$sports.Yes>0&dt$plan=="Hybrid"] <- "Hybrid/Yes-Sports"
+dt$plan[dt$sports.Yes==0&dt$plan=="In-person"] <- "In-person/No-Sports"
+dt$plan[dt$sports.Yes==0&dt$plan=="Hybrid"] <- "Hybrid/No-Sports"
+
+dt$school_rel  <- dt$school
+dt$plan_factor <- as.factor(dt$plan)
+dt$plan_factor <- relevel(dt$plan_factor, "Hybrid/No-Sports")
+dt$plan_factor <- relevel(dt$plan_factor, "Hybrid/Yes-Sports")
+dt$plan_factor <- relevel(dt$plan_factor, "In-person/No-Sports")
+dt$plan_factor <- relevel(dt$plan_factor, "In-person/Yes-Sports")
+
+dt <- subset(dt, dt$plan!="Unknown")
+
+adf <- aggregate(school ~ as.factor(daysopen)*plan_factor, data=dt, FUN=mean)
+names(adf) <- c("daysopen","plan","school_rel")
+adf$daysopen <- as.numeric(levels(adf$daysopen)[adf$daysopen])
+fig <- ggplot(adf, aes(x=daysopen, y=school_rel, colour=plan)) +
+    thm + # figtheme +
+  # xlim(c(-30,124)) +
+  ylim(c(0,0.26)) +
+  geom_line(aes(color = plan) ,size=2)+
+geom_vline(xintercept = 0, linetype="dashed", size=1) +
+  scale_x_continuous(breaks=c(-20,0,20,40, 60 , 80),limits=c(-30,90)) +
+  ylab("K-12 School Visits / Device") +  xlab("Days since School Opening")
+pdf(sprintf("%s/tex/tables_and_figures/schoolmode-event-sports-school.pdf",rootdir), width=8, height=6)
+print(fig)
+dev.off()
+
+adf <- aggregate(dcase_capita ~ as.factor(daysopen)*plan_factor, data=dt, FUN=mean)
+names(adf) <- c("daysopen","plan","dcase_capita")
+adf$daysopen <- as.numeric(levels(adf$daysopen)[adf$daysopen])
+fig <- ggplot(adf, aes(x=daysopen, y=dcase_capita, colour=plan)) + geom_line() + thm +
+  # xlim(c(-50,max(adf$daysopen))) +
+  geom_line(aes(color = plan) ,size=2)+
+  ylim(c(-0,8)) +
+  scale_x_continuous(breaks=c(-20,0,20,   40, 60 , 80),limits=c(-30,90)) +
+  #xlim(c(-30,90)) +
+geom_vline(xintercept = 0, linetype="dashed", size=1) +
+  #ggtitle("New cases per 1000 and days open") +
+  ylab("Weekly Cases Per 1000") +  xlab("Days since School Opening")
+pdf(sprintf("%s/tex/tables_and_figures/schoolmode-event-sports-newcases.pdf",rootdir), width=8, height=6)
+# png("event-newcases.png")
+print(fig)
+dev.off()
+
+adf <- aggregate(ddeath_capita ~ as.factor(daysopen)*plan_factor, data=dt, FUN=mean)
+names(adf) <- c("daysopen","plan","ddeath_capita")
+adf$daysopen <- as.numeric(levels(adf$daysopen)[adf$daysopen])
+fig <- ggplot(adf, aes(x=daysopen, y=ddeath_capita, colour=plan)) + geom_line() + thm +
+  # xlim(c(-50,max(adf$daysopen))) +
+  geom_line(aes(color = plan) ,size=2)+
+  ylim(c(-0,0.18)) +
+geom_vline(xintercept = 0, linetype="dashed", size=1) +
+  scale_x_continuous(breaks=c(-20,0,20, 40, 60 , 80),limits=c(-30,90)) +
+  #ggtitle("New deaths per 1000 and days open") +
+  ylab("Weekly Deaths Per 1000") +  xlab("Days since School Opening")
+pdf(sprintf("%s/tex/tables_and_figures/schoolmode-event-sports-newdeaths.pdf",rootdir), width=8, height=6)
+#png("event-newdeaths.png")
+print(fig)
+dev.off()
+
+dt <- dt2
+dt$plan[dt$online.No>0&dt$plan=="In-person"] <- "In-person/No-Online"
+dt$plan[dt$online.No>0&dt$plan=="Hybrid"] <- "Hybrid/No-Online"
+dt$plan[dt$online.No==0&dt$plan=="In-person"] <- "In-person/Yes-Online"
+dt$plan[dt$online.No==0&dt$plan=="Hybrid"] <- "Hybrid/Yes-Online"
+
+dt$school_rel  <- dt$school
+dt$plan_factor <- as.factor(dt$plan)
+dt$plan_factor <- relevel(dt$plan_factor, "Hybrid/Yes-Online")
+dt$plan_factor <- relevel(dt$plan_factor, "Hybrid/No-Online")
+dt$plan_factor <- relevel(dt$plan_factor, "In-person/Yes-Online")
+dt$plan_factor <- relevel(dt$plan_factor, "In-person/No-Online")
+
+dt <- subset(dt, dt$plan!="Unknown")
+
+adf <- aggregate(school ~ as.factor(daysopen)*plan_factor, data=dt, FUN=mean)
+names(adf) <- c("daysopen","plan","school_rel")
+adf$daysopen <- as.numeric(levels(adf$daysopen)[adf$daysopen])
+fig <- ggplot(adf, aes(x=daysopen, y=school_rel, colour=plan)) +
+    thm + # figtheme +
+  # xlim(c(-30,124)) +
+  ylim(c(0,0.28)) +
+  geom_line(aes(color = plan) ,size=2)+
+geom_vline(xintercept = 0, linetype="dashed", size=1) +
+  scale_x_continuous(breaks=c(-20,0,20,40, 60 , 80),limits=c(-30,90)) +
+  ylab("K-12 School Visits / Device") +  xlab("Days since School Opening")
+pdf(sprintf("%s/tex/tables_and_figures/schoolmode-event-online-school.pdf",rootdir), width=8, height=6)
+print(fig)
+dev.off()
+
+adf <- aggregate(dcase_capita ~ as.factor(daysopen)*plan_factor, data=dt, FUN=mean)
+names(adf) <- c("daysopen","plan","dcase_capita")
+adf$daysopen <- as.numeric(levels(adf$daysopen)[adf$daysopen])
+fig <- ggplot(adf, aes(x=daysopen, y=dcase_capita, colour=plan)) + geom_line() + thm +
+  # xlim(c(-50,max(adf$daysopen))) +
+  geom_line(aes(color = plan) ,size=2)+
+  ylim(c(-0,8)) +
+  scale_x_continuous(breaks=c(-20,0,20, 40, 60 , 80),limits=c(-30,90)) +
+  #xlim(c(-30,90)) +
+geom_vline(xintercept = 0, linetype="dashed", size=1) +
+  #ggtitle("New cases per 1000 and days open") +
+  ylab("Weekly Cases Per 1000") +  xlab("Days since School Opening")
+pdf(sprintf("%s/tex/tables_and_figures/schoolmode-event-online-newcases.pdf",rootdir), width=8, height=6)
+# png("event-newcases.png")
+print(fig)
+dev.off()
+
+adf <- aggregate(ddeath_capita ~ as.factor(daysopen)*plan_factor, data=dt, FUN=mean)
+names(adf) <- c("daysopen","plan","ddeath_capita")
+adf$daysopen <- as.numeric(levels(adf$daysopen)[adf$daysopen])
+fig <- ggplot(adf, aes(x=daysopen, y=ddeath_capita, colour=plan)) + geom_line() + thm +
+  # xlim(c(-50,max(adf$daysopen))) +
+  geom_line(aes(color = plan) ,size=2)+
+  ylim(c(-0,0.18)) +
+geom_vline(xintercept = 0, linetype="dashed", size=1) +
+  scale_x_continuous(breaks=c(-20,0,20, 40, 60 , 80),limits=c(-30,90)) +
+  #ggtitle("New deaths per 1000 and days open") +
+  ylab("Weekly Deaths Per 1000") +  xlab("Days since School Opening")
+pdf(sprintf("%s/tex/tables_and_figures/schoolmode-event-online-newdeaths.pdf",rootdir), width=8, height=6)
+#png("event-newdeaths.png")
+print(fig)
+dev.off()
+
+
+# effect on behavior
+adf <- aggregate(school ~ as.factor(daysopen)*plan_factor, data=dt, FUN=mean)
+names(adf) <- c("daysopen","plan","school")
+adf$daysopen <- as.numeric(levels(adf$daysopen)[adf$daysopen])
+fig <- ggplot(adf, aes(x=daysopen, y=school, colour=plan)) +
+    thm + # figtheme +
+  # xlim(c(-30,124)) +
+  ylim(c(0,0.29)) +
+  geom_line(aes(color = plan) ,size=2)+
+geom_vline(xintercept = 0, linetype="dashed", size=1) +
+  scale_x_continuous(breaks=c(-20,0,20,40, 60 , 80),limits=c(-30,90)) +
+  ylab("K-12 School Visits / Device") +  xlab("Days since School Opening")
+pdf(sprintf("%s/tex/tables_and_figures/schoolmode-event-online-school.pdf",rootdir), width=8, height=6)
+print(fig)
+dev.off()
+
+adf <- aggregate(fullwork ~ as.factor(daysopen)*plan_factor, data=dt, FUN=mean)
+names(adf) <- c("daysopen","plan","fullwork")
+adf$daysopen <- as.numeric(levels(adf$daysopen)[adf$daysopen])
+fig <- ggplot(adf, aes(x=daysopen, y=fullwork, colour=plan)) +
+    thm +
+   ylim(c(0,0.095)) +
+  geom_line(aes(color = plan) ,size=2)+
+geom_vline(xintercept = 0, linetype="dashed", size=1) +
+  scale_x_continuous(breaks=c(-20,0,20,40, 60 , 80),limits=c(-30,90)) +
+   theme(legend.position = c(0.73,0.33)) +
+  ylab("Full Time Work / Device") +  xlab("Days since School Opening")
+pdf(sprintf("%s/tex/tables_and_figures/schoolmode-event-online-fullwork.pdf",rootdir), width=8, height=6)
+print(fig)
+dev.off()
+
+
+```
+
+
+```{r ddplot-calendar,  eval=TRUE, cache=FALSE}
+
+library(tidyverse)
+
+thm <-  theme(legend.text = element_text(size = 22), title = element_text(size=22, face='bold'),legend.position = c(0.24, 0.81),
+              axis.text.x = element_text(size = 22, face='bold'), axis.text.y = element_text(size = 22, face='bold'),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_rect(fill = "transparent",colour = NA),
+        plot.background = element_rect(fill = "transparent",colour = NA))
+
+## Case by K-12 Visits with staffmask
+L <- L.c
+startdate  <- "2020-08-28"
+enddate <-  "2020-12-02"
+df$school_visits_ma <- panelma(df$school_visits, df$fips, df$date, len=30)
+sdf <- subset(df, df$date>=as.Date(startdate))
+sdf <- subset(sdf, sdf$school_visits_ma>0.01)
+q <- quantile(sdf$school,probs=c(0.25,0.5,0.75),na.rm=TRUE)
+print(q)
+df$sc_dum <- NULL
+df$sc_dum[(df$sc_l==1)] <- "Low/Yes-Staff-Mask"
+df$sc_dum[(df$sc_l==1 & df$staffmask.No>0 )] <- "Low/No-Staff-Mask"
+df$sc_dum[(df$sc_m==1)] <- "Medium/Yes-Staff-Mask"
+df$sc_dum[(df$sc_m==1 & df$staffmask.No>0 )] <- "Medium/No-Staff-Mask"
+df$sc_dum[(df$sc_h==1)] <- "High/Yes-Staff-Mask"
+df$sc_dum[(df$sc_h==1 & df$staffmask.No>0 )] <- "High/No-Staff-Mask"
+df$sc_dum <- panellag(df$sc_dum, df$fips, df$date, L)
+sdf <- subset(df, df$date>=as.Date(startdate))
+sdf <- subset(sdf, sdf$date<=as.Date(enddate))
+sdf <- subset(sdf, (!is.na(sdf$sc_dum)) )
+
+sdf$pschool_factor <- as.factor(sdf$sc_dum)
+sdf$pschool_factor <- relevel(sdf$pschool_factor, "Low/Yes-Staff-Mask")
+sdf$pschool_factor <- relevel(sdf$pschool_factor, "Low/No-Staff-Mask")
+sdf$pschool_factor <- relevel(sdf$pschool_factor, "Medium/Yes-Staff-Mask")
+sdf$pschool_factor <- relevel(sdf$pschool_factor, "Medium/No-Staff-Mask")
+sdf$pschool_factor <- relevel(sdf$pschool_factor, "High/Yes-Staff-Mask")
+sdf$pschool_factor <- relevel(sdf$pschool_factor, "High/No-Staff-Mask")
+sdf$dcases_capita <- 1000*sdf$dcases/sdf$PopulationEstimate2018
+sdf$xvar <- sdf$date
+sdf$yvar <- sdf$dcases_capita
+sdf$group <- sdf$pschool_factor
+
+sample_sum <- sdf %>%
+  group_by(xvar, group) %>%
+  summarize(mean = mean(yvar, na.rm = TRUE),
+            sd   = sd(yvar, na.rm = TRUE),
+            percent90 = quantile(yvar,probs=0.9, na.rm=TRUE),
+            percent10 = quantile(yvar,probs=0.1, na.rm=TRUE)) %>%
+  ungroup()
+
+fig <- ggplot(sample_sum %>%
+              gather(stat, yvar, mean, percent10:percent90),
+            aes(x = xvar, y = yvar)) +
+  labs(title = "Average Weekly Cases by Visits to K-12 Schools",
+       # subtitle =  ,
+       #caption =  ,
+       x = "Date",
+       y = "Weekly Cases Per 1000") +
+  geom_line(aes(color = group, linetype = stat) ,size=2.5)
+fig <-  fig +
+    # xlim(c(as.Date(startdate), as.Date(enddate))) +
+  scale_linetype(labels = c("Mean", "10 %", "90 %")) +
+  scale_color_discrete(breaks=c("High/No-Staff-Mask","High/Yes-Staff-Mask","Medium/No-Staff-Mask","Medium/Yes-Staff-Mask","Low/No-Staff-Mask","Low/Yes-Staff-Mask")) + thm
+pdf(sprintf("%s/tex/tables_and_figures/school-weekcase-staff.pdf", rootdir), width=8, height=6)
+print(fig)
+dev.off()
+
+fig <- ggplot(sample_sum %>%
+              gather(stat, yvar, mean),
+            aes(x = xvar, y = yvar)) +
+  labs(#title = "Weekly Cases by Visits to K-12 Schools",
+       # subtitle =  ,
+       #caption =  ,
+       x = "Date",
+       y = "Weekly Cases Per 1000") +
+  geom_line(aes(color = group) ,size=2.5)
+fig <-  fig + #      xlim(c(as.Date(startdate), as.Date(enddate))) +
+  scale_color_discrete(breaks=c("High/No-Staff-Mask","High/Yes-Staff-Mask","Medium/No-Staff-Mask","Medium/Yes-Staff-Mask","Low/No-Staff-Mask","Low/Yes-Staff-Mask")) + thm
+pdf(sprintf("%s/tex/tables_and_figures/school-weekcase-staff-simple.pdf", rootdir), width=8, height=6)
+print(fig)
+dev.off()
+
+
+## Death by K-12 Visits
+L <- L.d
+df$sc_dum <- NULL
+df$sc_dum[(df$sc_l==1)] <- "Low/Yes-Staff-Mask"
+df$sc_dum[(df$sc_l==1 & df$staffmask.No>0)] <- "Low/No-Staff-Mask"
+df$sc_dum[(df$sc_m==1)] <- "Medium/Yes-Staff-Mask"
+df$sc_dum[(df$sc_m==1 & df$staffmask.No>0)] <- "Medium/No-Staff-Mask"
+df$sc_dum[(df$sc_h==1)] <- "High/Yes-Staff-Mask"
+df$sc_dum[(df$sc_h==1 & df$staffmask.No>0)] <- "High/No-Staff-Mask"
+df$sc_dum <- panellag(df$sc_dum, df$fips, df$date, L)
+sdf <- subset(df, df$date>=as.Date(startdate))
+sdf <- subset(sdf, (!is.na(sdf$sc_dum)) )
+sdf$pschool_factor <- as.factor(sdf$sc_dum)
+sdf$pschool_factor <- relevel(sdf$pschool_factor, "Low/Yes-Staff-Mask")
+sdf$pschool_factor <- relevel(sdf$pschool_factor, "Low/No-Staff-Mask")
+sdf$pschool_factor <- relevel(sdf$pschool_factor, "Medium/Yes-Staff-Mask")
+sdf$pschool_factor <- relevel(sdf$pschool_factor, "Medium/No-Staff-Mask")
+sdf$pschool_factor <- relevel(sdf$pschool_factor, "High/Yes-Staff-Mask")
+sdf$pschool_factor <- relevel(sdf$pschool_factor, "High/No-Staff-Mask")
+sdf$dcases_capita <- 1000*sdf$dcases/sdf$PopulationEstimate2018
+
+sdf$xvar <- sdf$date
+sdf$yvar <- sdf$ddeath_capita
+sdf$group <- sdf$pschool_factor
+
+sample_sum <- sdf %>%
+  group_by(xvar, group) %>%
+  summarize(mean = mean(yvar, na.rm = TRUE),
+            sd   = sd(yvar, na.rm = TRUE),
+            percent90 = quantile(yvar,probs=0.9, na.rm=TRUE),
+            percent10 = quantile(yvar,probs=0.1, na.rm=TRUE)) %>%
+  ungroup()
+
+fig <- ggplot(sample_sum %>%
+              gather(stat, yvar, mean, percent10:percent90),
+            aes(x = xvar, y = yvar)) +
+  labs(title = "Average Weekly Deaths by Visits to K-12 Schools",
+       # subtitle =  ,
+       #caption =  ,
+       x = "Date",
+       y = "Weekly Deaths Per 1000") +
+  geom_line(aes(color = group, linetype = stat) ,size=2.5)
+fig <-  fig +  xlim(c(as.Date("2020-09-15"), as.Date(enddate))) +
+  ylim(c(0,0.3)) +
+  scale_linetype(labels = c("Mean", "10 %", "90 %")) +
+  scale_color_discrete(breaks=c("High/No-Staff-Mask","High/Yes-Staff-Mask","Medium/No-Staff-Mask","Medium/Yes-Staff-Mask","Low/No-Staff-Mask","Low/Yes-Staff-Mask")) + thm
+pdf(sprintf("%s/tex/tables_and_figures/school-weekdeath-staff.pdf", rootdir), width=8, height=6)
+print(fig)
+dev.off()
+
+fig <- ggplot(sample_sum %>%
+              gather(stat, yvar, mean),
+            aes(x = xvar, y = yvar)) +
+  labs(#title = "Weekly Cases by Visits to K-12 Schools",
+       # subtitle =  ,
+       #caption =  ,
+       x = "Date",
+       y = "Weekly Deaths Per 1000") +
+  geom_line(aes(color = group) ,size=2.5)
+fig <-  fig +  xlim(c(as.Date("2020-09-15"), as.Date(enddate))) +
+  ylim(c(0,0.33)) +
+  scale_color_discrete(breaks=c("High/No-Staff-Mask","High/Yes-Staff-Mask","Medium/No-Staff-Mask","Medium/Yes-Staff-Mask","Low/No-Staff-Mask","Low/Yes-Staff-Mask")) + thm
+pdf(sprintf("%s/tex/tables_and_figures/school-weekdeath-staff-simple.pdf", rootdir), width=8, height=6)
+print(fig)
+dev.off()
+
+print(fig)
+
+
+
+
+
+## Case by K-12 Visits with sports
+L <- L.c
+startdate  <- "2020-08-28"
+enddate <-  "2020-12-02"
+df$school_visits_ma <- panelma(df$school_visits, df$fips, df$date, len=30)
+sdf <- subset(df, df$date>=as.Date(startdate))
+sdf <- subset(sdf, sdf$school_visits_ma>0.01)
+q <- quantile(sdf$school,probs=c(0.25,0.5,0.75),na.rm=TRUE)
+print(q)
+df$sc_dum <- NULL
+df$sc_dum[(df$sc_l==1)] <- "Low/No-Sports"
+df$sc_dum[(df$sc_l==1 & df$sports.Yes>0 )] <- "Low/Yes-Sports"
+df$sc_dum[(df$sc_m==1)] <- "Medium/No-Sports"
+df$sc_dum[(df$sc_m==1 & df$sports.Yes>0 )] <- "Medium/Yes-Sports"
+df$sc_dum[(df$sc_h==1)] <- "High/No-Sports"
+df$sc_dum[(df$sc_h==1 & df$sports.Yes>0 )] <- "High/Yes-Sports"
+df$sc_dum <- panellag(df$sc_dum, df$fips, df$date, L)
+sdf <- subset(df, df$date>=as.Date(startdate))
+sdf <- subset(sdf, sdf$date<=as.Date(enddate))
+sdf <- subset(sdf, (!is.na(sdf$sc_dum)) )
+
+sdf$pschool_factor <- as.factor(sdf$sc_dum)
+sdf$pschool_factor <- relevel(sdf$pschool_factor, "Low/No-Sports")
+sdf$pschool_factor <- relevel(sdf$pschool_factor, "Low/Yes-Sports")
+sdf$pschool_factor <- relevel(sdf$pschool_factor, "Medium/No-Sports")
+sdf$pschool_factor <- relevel(sdf$pschool_factor, "Medium/Yes-Sports")
+sdf$pschool_factor <- relevel(sdf$pschool_factor, "High/No-Sports")
+sdf$pschool_factor <- relevel(sdf$pschool_factor, "High/Yes-Sports")
+sdf$dcases_capita <- 1000*sdf$dcases/sdf$PopulationEstimate2018
+sdf$xvar <- sdf$date
+sdf$yvar <- sdf$dcases_capita
+sdf$group <- sdf$pschool_factor
+
+sample_sum <- sdf %>%
+  group_by(xvar, group) %>%
+  summarize(mean = mean(yvar, na.rm = TRUE),
+            sd   = sd(yvar, na.rm = TRUE),
+            percent90 = quantile(yvar,probs=0.9, na.rm=TRUE),
+            percent10 = quantile(yvar,probs=0.1, na.rm=TRUE)) %>%
+  ungroup()
+
+fig <- ggplot(sample_sum %>%
+              gather(stat, yvar, mean, percent10:percent90),
+            aes(x = xvar, y = yvar)) +
+  labs(title = "Average Weekly Cases by Visits to K-12 Schools",
+       # subtitle =  ,
+       #caption =  ,
+       x = "Date",
+       y = "Weekly Cases Per 1000") +
+  geom_line(aes(color = group, linetype = stat) ,size=2.5)
+fig <-  fig +
+  scale_linetype(labels = c("Mean", "10 %", "90 %")) +
+  scale_color_discrete(breaks=c("High/Yes-Sports","High/No-Sports","Medium/Yes-Sports","Medium/No-Sports","Low/Yes-Sports","Low/No-Sports")) + thm
+pdf(sprintf("%s/tex/tables_and_figures/school-weekcase-sports.pdf", rootdir), width=8, height=6)
+print(fig)
+dev.off()
+
+fig <- ggplot(sample_sum %>%
+              gather(stat, yvar, mean),
+            aes(x = xvar, y = yvar)) +
+  labs(#title = "Weekly Cases by Visits to K-12 Schools",
+       # subtitle =  ,
+       #caption =  ,
+       x = "Date",
+       y = "Weekly Cases Per 1000") +
+  geom_line(aes(color = group) ,size=2.5)
+fig <-  fig + #      xlim(c(as.Date(startdate), as.Date(enddate))) +
+  scale_color_discrete(breaks=c("High/Yes-Sports","High/No-Sports","Medium/Yes-Sports","Medium/No-Sports","Low/Yes-Sports","Low/No-Sports")) + thm
+pdf(sprintf("%s/tex/tables_and_figures/school-weekcase-sports-simple.pdf", rootdir), width=8, height=6)
+print(fig)
+dev.off()
+
+
+## Death by K-12 Visits
+L <- L.d
+df$sc_dum <- NULL
+df$sc_dum[(df$sc_l==1)] <- "Low/No-Sports"
+df$sc_dum[(df$sc_l==1 & df$sports.Yes>0)] <- "Low/Yes-Sports"
+df$sc_dum[(df$sc_m==1)] <- "Medium/No-Sports"
+df$sc_dum[(df$sc_m==1 & df$sports.Yes>0)] <- "Medium/Yes-Sports"
+df$sc_dum[(df$sc_h==1)] <- "High/No-Sports"
+df$sc_dum[(df$sc_h==1 & df$sports.Yes>0)] <- "High/Yes-Sports"
+df$sc_dum <- panellag(df$sc_dum, df$fips, df$date, L)
+sdf <- subset(df, df$date>=as.Date(startdate))
+sdf <- subset(sdf, sdf$date<=as.Date(enddate))
+sdf <- subset(sdf, (!is.na(sdf$sc_dum)) )
+sdf$pschool_factor <- as.factor(sdf$sc_dum)
+sdf$pschool_factor <- relevel(sdf$pschool_factor, "Low/No-Sports")
+sdf$pschool_factor <- relevel(sdf$pschool_factor, "Low/Yes-Sports")
+sdf$pschool_factor <- relevel(sdf$pschool_factor, "Medium/No-Sports")
+sdf$pschool_factor <- relevel(sdf$pschool_factor, "Medium/Yes-Sports")
+sdf$pschool_factor <- relevel(sdf$pschool_factor, "High/No-Sports")
+sdf$pschool_factor <- relevel(sdf$pschool_factor, "High/Yes-Sports")
+sdf$dcases_capita <- 1000*sdf$dcases/sdf$PopulationEstimate2018
+
+sdf$xvar <- sdf$date
+sdf$yvar <- sdf$ddeath_capita
+sdf$group <- sdf$pschool_factor
+
+sample_sum <- sdf %>%
+  group_by(xvar, group) %>%
+  summarize(mean = mean(yvar, na.rm = TRUE),
+            sd   = sd(yvar, na.rm = TRUE),
+            percent90 = quantile(yvar,probs=0.9, na.rm=TRUE),
+            percent10 = quantile(yvar,probs=0.1, na.rm=TRUE)) %>%
+  ungroup()
+
+fig <- ggplot(sample_sum %>%
+              gather(stat, yvar, mean, percent10:percent90),
+            aes(x = xvar, y = yvar)) +
+  labs(title = "Average Weekly Deaths by Visits to K-12 Schools",
+       # subtitle =  ,
+       #caption =  ,
+       x = "Date",
+       y = "Weekly Deaths Per 1000") +
+  geom_line(aes(color = group, linetype = stat) ,size=2.5)
+fig <-  fig +
+    # xlim(c(as.Date(startdate), as.Date(enddate))) +
+  ylim(c(0,0.3)) +
+  scale_linetype(labels = c("Mean", "10 %", "90 %")) +
+  scale_color_discrete(breaks=c("High/Yes-Sports","High/No-Sports","Medium/Yes-Sports","Medium/No-Sports","Low/Yes-Sports","Low/No-Sports")) + thm
+pdf(sprintf("%s/tex/tables_and_figures/school-weekdeath-sports.pdf", rootdir), width=8, height=6)
+print(fig)
+dev.off()
+
+fig <- ggplot(sample_sum %>%
+              gather(stat, yvar, mean),
+            aes(x = xvar, y = yvar)) +
+  labs(#title = "Weekly Cases by Visits to K-12 Schools",
+       # subtitle =  ,
+       #caption =  ,
+       x = "Date",
+       y = "Weekly Deaths Per 1000") +
+  geom_line(aes(color = group) ,size=2.5)
+fig <-  fig +  xlim(c(as.Date("2020-09-15"), as.Date(enddate))) +
+  ylim(c(0,0.3)) +
+  scale_color_discrete(breaks=c("High/Yes-Sports","High/No-Sports","Medium/Yes-Sports","Medium/No-Sports","Low/Yes-Sports","Low/No-Sports")) + thm
+pdf(sprintf("%s/tex/tables_and_figures/school-weekdeath-sports-simple.pdf", rootdir), width=8, height=6)
+print(fig)
+dev.off()
+
+print(fig)
+
+
+
+
+
+
+## Case by K-12 Visits with online
+L <- L.c
+startdate  <- "2020-08-28"
+enddate <-  "2020-12-02"
+df$school_visits_ma <- panelma(df$school_visits, df$fips, df$date, len=30)
+sdf <- subset(df, df$date>=as.Date(startdate))
+sdf <- subset(sdf, sdf$school_visits_ma>0.01)
+q <- quantile(sdf$school,probs=c(0.25,0.5,0.75),na.rm=TRUE)
+print(q)
+df$sc_dum <- NULL
+df$sc_dum[(df$sc_l==1)] <- "Low/Yes-Online"
+df$sc_dum[(df$sc_l==1 & df$online.No>0 )] <- "Low/No-Online"
+df$sc_dum[(df$sc_m==1)] <- "Medium/Yes-Online"
+df$sc_dum[(df$sc_m==1 & df$online.No>0 )] <- "Medium/No-Online"
+df$sc_dum[(df$sc_h==1)] <- "High/Yes-Online"
+df$sc_dum[(df$sc_h==1 & df$online.No>0 )] <- "High/No-Online"
+df$sc_dum <- panellag(df$sc_dum, df$fips, df$date, L)
+sdf <- subset(df, df$date>=as.Date(startdate))
+sdf <- subset(sdf, sdf$date<=as.Date(enddate))
+sdf <- subset(sdf, (!is.na(sdf$sc_dum)) )
+
+sdf$pschool_factor <- as.factor(sdf$sc_dum)
+sdf$pschool_factor <- relevel(sdf$pschool_factor, "Low/Yes-Online")
+sdf$pschool_factor <- relevel(sdf$pschool_factor, "Low/No-Online")
+sdf$pschool_factor <- relevel(sdf$pschool_factor, "Medium/Yes-Online")
+sdf$pschool_factor <- relevel(sdf$pschool_factor, "Medium/No-Online")
+sdf$pschool_factor <- relevel(sdf$pschool_factor, "High/Yes-Online")
+sdf$pschool_factor <- relevel(sdf$pschool_factor, "High/No-Online")
+sdf$dcases_capita <- 1000*sdf$dcases/sdf$PopulationEstimate2018
+sdf$xvar <- sdf$date
+sdf$yvar <- sdf$dcases_capita
+sdf$group <- sdf$pschool_factor
+
+sample_sum <- sdf %>%
+  group_by(xvar, group) %>%
+  summarize(mean = mean(yvar, na.rm = TRUE),
+            sd   = sd(yvar, na.rm = TRUE),
+            percent90 = quantile(yvar,probs=0.9, na.rm=TRUE),
+            percent10 = quantile(yvar,probs=0.1, na.rm=TRUE)) %>%
+  ungroup()
+
+fig <- ggplot(sample_sum %>%
+              gather(stat, yvar, mean, percent10:percent90),
+            aes(x = xvar, y = yvar)) +
+  labs(title = "Average Weekly Cases by Visits to K-12 Schools",
+       # subtitle =  ,
+       #caption =  ,
+       x = "Date",
+       y = "Weekly Cases Per 1000") +
+  geom_line(aes(color = group, linetype = stat) ,size=2.5)
+fig <-  fig +
+  scale_linetype(labels = c("Mean", "10 %", "90 %")) +
+  scale_color_discrete(breaks=c("High/No-Online","High/Yes-Online","Medium/No-Online","Medium/Yes-Online","Low/No-Online","Low/Yes-Online")) + thm
+pdf(sprintf("%s/tex/tables_and_figures/school-weekcase-online.pdf", rootdir), width=8, height=6)
+print(fig)
+dev.off()
+
+fig <- ggplot(sample_sum %>%
+              gather(stat, yvar, mean),
+            aes(x = xvar, y = yvar)) +
+  labs(#title = "Weekly Cases by Visits to K-12 Schools",
+       # subtitle =  ,
+       #caption =  ,
+       x = "Date",
+       y = "Weekly Cases Per 1000") +
+  geom_line(aes(color = group) ,size=2.5)
+fig <-  fig + #      xlim(c(as.Date(startdate), as.Date(enddate))) +
+  scale_color_discrete(breaks=c("High/No-Online","High/Yes-Online","Medium/No-Online","Medium/Yes-Online","Low/No-Online","Low/Yes-Online")) + thm
+pdf(sprintf("%s/tex/tables_and_figures/school-weekcase-online-simple.pdf", rootdir), width=8, height=6)
+print(fig)
+dev.off()
+
+
+## Death by K-12 Visits
+L <- L.d
+df$sc_dum <- NULL
+df$sc_dum[(df$sc_l==1)] <- "Low/Yes-Online"
+df$sc_dum[(df$sc_l==1 & df$online.No>0)] <- "Low/No-Online"
+df$sc_dum[(df$sc_m==1)] <- "Medium/Yes-Online"
+df$sc_dum[(df$sc_m==1 & df$online.No>0)] <- "Medium/No-Online"
+df$sc_dum[(df$sc_h==1)] <- "High/Yes-Online"
+df$sc_dum[(df$sc_h==1 & df$online.No>0)] <- "High/No-Online"
+df$sc_dum <- panellag(df$sc_dum, df$fips, df$date, L)
+sdf <- subset(df, df$date>=as.Date(startdate))
+sdf <- subset(sdf, sdf$date<=as.Date(enddate))
+sdf <- subset(sdf, (!is.na(sdf$sc_dum)) )
+sdf$pschool_factor <- as.factor(sdf$sc_dum)
+sdf$pschool_factor <- relevel(sdf$pschool_factor, "Low/Yes-Online")
+sdf$pschool_factor <- relevel(sdf$pschool_factor, "Low/No-Online")
+sdf$pschool_factor <- relevel(sdf$pschool_factor, "Medium/Yes-Online")
+sdf$pschool_factor <- relevel(sdf$pschool_factor, "Medium/No-Online")
+sdf$pschool_factor <- relevel(sdf$pschool_factor, "High/Yes-Online")
+sdf$pschool_factor <- relevel(sdf$pschool_factor, "High/No-Online")
+sdf$dcases_capita <- 1000*sdf$dcases/sdf$PopulationEstimate2018
+
+sdf$xvar <- sdf$date
+sdf$yvar <- sdf$ddeath_capita
+sdf$group <- sdf$pschool_factor
+
+sample_sum <- sdf %>%
+  group_by(xvar, group) %>%
+  summarize(mean = mean(yvar, na.rm = TRUE),
+            sd   = sd(yvar, na.rm = TRUE),
+            percent90 = quantile(yvar,probs=0.9, na.rm=TRUE),
+            percent10 = quantile(yvar,probs=0.1, na.rm=TRUE)) %>%
+  ungroup()
+
+fig <- ggplot(sample_sum %>%
+              gather(stat, yvar, mean, percent10:percent90),
+            aes(x = xvar, y = yvar)) +
+  labs(title = "Average Weekly Deaths by Visits to K-12 Schools",
+       # subtitle =  ,
+       #caption =  ,
+       x = "Date",
+       y = "Weekly Deaths Per 1000") +
+  geom_line(aes(color = group, linetype = stat) ,size=2.5)
+fig <-  fig +
+    # xlim(c(as.Date(startdate), as.Date(enddate))) +
+  ylim(c(0,0.3)) +
+  scale_linetype(labels = c("Mean", "10 %", "90 %")) +
+  scale_color_discrete(breaks=c("High/No-Online","High/Yes-Online","Medium/No-Online","Medium/Yes-Online","Low/No-Online","Low/Yes-Online")) + thm
+pdf(sprintf("%s/tex/tables_and_figures/school-weekdeath-online.pdf", rootdir), width=8, height=6)
+print(fig)
+dev.off()
+
+fig <- ggplot(sample_sum %>%
+              gather(stat, yvar, mean),
+            aes(x = xvar, y = yvar)) +
+  labs(#title = "Weekly Cases by Visits to K-12 Schools",
+       # subtitle =  ,
+       #caption =  ,
+       x = "Date",
+       y = "Weekly Deaths Per 1000") +
+  geom_line(aes(color = group) ,size=2.5)
+fig <-  fig +  xlim(c(as.Date("2020-09-15"), as.Date(enddate))) +
+  ylim(c(0,0.3)) +
+  scale_color_discrete(breaks=c("High/No-Online","High/Yes-Online","Medium/No-Online","Medium/Yes-Online","Low/No-Online","Low/Yes-Online")) + thm
+pdf(sprintf("%s/tex/tables_and_figures/school-weekdeath-online-simple.pdf", rootdir), width=8, height=6)
+print(fig)
+dev.off()
+
+print(fig)
+
+
+
+
+## Case by K-12 Visits
+L <- L.c
+startdate  <- "2020-08-28"
+enddate <-  "2020-12-02"
+df$school_visits_ma <- panelma(df$school_visits, df$fips, df$date, len=30)
+sdf <- subset(df, df$date>=as.Date(startdate))
+sdf <- subset(sdf, sdf$school_visits_ma>0.01)
+q <- quantile(sdf$school,probs=c(0.25,0.5,0.75),na.rm=TRUE)
+print(q)
+df$sc_dum <- NULL
+df$sc_dum[(df$sc_l==1)] <- "Low/Yes-Mask"
+df$sc_dum[(df$sc_l==1 & df$studentmask.No>0 )] <- "Low/No-Mask"
+df$sc_dum[(df$sc_m==1)] <- "Medium/Yes-Mask"
+df$sc_dum[(df$sc_m==1 & df$studentmask.No>0 )] <- "Medium/No-Mask"
+df$sc_dum[(df$sc_h==1)] <- "High/Yes-Mask"
+df$sc_dum[(df$sc_h==1 & df$studentmask.No>0)] <- "High/No-Mask"
+df$sc_dum <- panellag(df$sc_dum, df$fips, df$date, L)
+sdf <- subset(df, df$date>=as.Date(startdate))
+sdf <- subset(sdf, sdf$date<=as.Date(enddate))
+sdf <- subset(sdf, (!is.na(sdf$sc_dum)) )
+
+sdf$pschool_factor <- as.factor(sdf$sc_dum)
+sdf$pschool_factor <- relevel(sdf$pschool_factor, "Low/Yes-Mask")
+sdf$pschool_factor <- relevel(sdf$pschool_factor, "Low/No-Mask")
+sdf$pschool_factor <- relevel(sdf$pschool_factor, "Medium/Yes-Mask")
+sdf$pschool_factor <- relevel(sdf$pschool_factor, "Medium/No-Mask")
+sdf$pschool_factor <- relevel(sdf$pschool_factor, "High/Yes-Mask")
+sdf$pschool_factor <- relevel(sdf$pschool_factor, "High/No-Mask")
+sdf$dcases_capita <- 1000*sdf$dcases/sdf$PopulationEstimate2018
+sdf$xvar <- sdf$date
+sdf$yvar <- sdf$dcases_capita
+sdf$group <- sdf$pschool_factor
+
+sample_sum <- sdf %>%
+  group_by(xvar, group) %>%
+  summarize(mean = mean(yvar, na.rm = TRUE),
+            sd   = sd(yvar, na.rm = TRUE),
+            percent90 = quantile(yvar,probs=0.9, na.rm=TRUE),
+            percent10 = quantile(yvar,probs=0.1, na.rm=TRUE)) %>%
+  ungroup()
+
+fig <- ggplot(sample_sum %>%
+              gather(stat, yvar, mean, percent10:percent90),
+            aes(x = xvar, y = yvar)) +
+  labs(title = "Average Weekly Cases by Visits to K-12 Schools",
+       # subtitle =  ,
+       #caption =  ,
+       x = "Date",
+       y = "Weekly Cases Per 1000") +
+  geom_line(aes(color = group, linetype = stat) ,size=2.5)
+fig <-  fig +
+    # xlim(c(as.Date(startdate), as.Date(enddate))) +
+  scale_linetype(labels = c("Mean", "10 %", "90 %")) +
+  scale_color_discrete(breaks=c("High/No-Mask","High/Yes-Mask","Medium/No-Mask","Medium/Yes-Mask","Low/No-Mask","Low/Yes-Mask")) + thm
+pdf(sprintf("%s/tex/tables_and_figures/school-weekcase.pdf", rootdir), width=8, height=6)
+print(fig)
+dev.off()
+
+fig <- ggplot(sample_sum %>%
+              gather(stat, yvar, mean),
+            aes(x = xvar, y = yvar)) +
+  labs(#title = "Weekly Cases by Visits to K-12 Schools",
+       # subtitle =  ,
+       #caption =  ,
+       x = "Date",
+       y = "Weekly Cases Per 1000") +
+  geom_line(aes(color = group) ,size=2.5)
+fig <-  fig + #      xlim(c(as.Date(startdate), as.Date(enddate))) +
+  scale_color_discrete(breaks=c("High/No-Mask","High/Yes-Mask","Medium/No-Mask","Medium/Yes-Mask","Low/No-Mask","Low/Yes-Mask")) + thm
+pdf(sprintf("%s/tex/tables_and_figures/school-weekcase-simple.pdf", rootdir), width=8, height=6)
+print(fig)
+dev.off()
+
+
+## Death by K-12 Visits
+L <- L.d
+df$sc_dum <- NULL
+df$sc_dum[(df$sc_l==1)] <- "Low/Yes-Mask"
+df$sc_dum[(df$sc_l==1 & df$studentmask.No>0 )] <- "Low/No-Mask"
+df$sc_dum[(df$sc_m==1)] <- "Medium/Yes-Mask"
+df$sc_dum[(df$sc_m==1 & df$studentmask.No>0 )] <- "Medium/No-Mask"
+df$sc_dum[(df$sc_h==1)] <- "High/Yes-Mask"
+df$sc_dum[(df$sc_h==1 & df$studentmask.No>0)] <- "High/No-Mask"
+df$sc_dum <- panellag(df$sc_dum, df$fips, df$date, L)
+sdf <- subset(df, df$date>=as.Date(startdate))
+sdf <- subset(sdf, sdf$date<=as.Date(enddate))
+sdf <- subset(sdf, (!is.na(sdf$sc_dum)) )
+sdf$pschool_factor <- as.factor(sdf$sc_dum)
+sdf$pschool_factor <- relevel(sdf$pschool_factor, "Low/Yes-Mask")
+sdf$pschool_factor <- relevel(sdf$pschool_factor, "Low/No-Mask")
+sdf$pschool_factor <- relevel(sdf$pschool_factor, "Medium/Yes-Mask")
+sdf$pschool_factor <- relevel(sdf$pschool_factor, "Medium/No-Mask")
+sdf$pschool_factor <- relevel(sdf$pschool_factor, "High/Yes-Mask")
+sdf$pschool_factor <- relevel(sdf$pschool_factor, "High/No-Mask")
+sdf$dcases_capita <- 1000*sdf$dcases/sdf$PopulationEstimate2018
+
+sdf$xvar <- sdf$date
+sdf$yvar <- sdf$ddeath_capita
+sdf$group <- sdf$pschool_factor
+
+sample_sum <- sdf %>%
+  group_by(xvar, group) %>%
+  summarize(mean = mean(yvar, na.rm = TRUE),
+            sd   = sd(yvar, na.rm = TRUE),
+            percent90 = quantile(yvar,probs=0.9, na.rm=TRUE),
+            percent10 = quantile(yvar,probs=0.1, na.rm=TRUE)) %>%
+  ungroup()
+
+fig <- ggplot(sample_sum %>%
+              gather(stat, yvar, mean, percent10:percent90),
+            aes(x = xvar, y = yvar)) +
+  labs(title = "Average Weekly Deaths by Visits to K-12 Schools",
+       # subtitle =  ,
+       #caption =  ,
+       x = "Date",
+       y = "Weekly Deaths Per 1000") +
+  geom_line(aes(color = group, linetype = stat) ,size=2.5)
+fig <-  fig +  xlim(c(as.Date("2020-09-15"), as.Date(enddate))) +
+  ylim(c(0,0.3)) +
+  scale_linetype(labels = c("Mean", "10 %", "90 %")) +
+  scale_color_discrete(breaks=c("High/No-Mask","High/Yes-Mask","Medium/No-Mask","Medium/Yes-Mask","Low/No-Mask","Low/Yes-Mask")) + thm
+pdf(sprintf("%s/tex/tables_and_figures/school-weekdeath.pdf", rootdir), width=8, height=6)
+print(fig)
+dev.off()
+
+fig <- ggplot(sample_sum %>%
+              gather(stat, yvar, mean),
+            aes(x = xvar, y = yvar)) +
+  labs(#title = "Weekly Cases by Visits to K-12 Schools",
+       # subtitle =  ,
+       #caption =  ,
+       x = "Date",
+       y = "Weekly Deaths Per 1000") +
+  geom_line(aes(color = group) ,size=2.5)
+fig <-  fig +  xlim(c(as.Date("2020-09-15"), as.Date(enddate))) +
+  ylim(c(0,0.27)) +
+  scale_color_discrete(breaks=c("High/No-Mask","High/Yes-Mask","Medium/No-Mask","Medium/Yes-Mask","Low/No-Mask","Low/Yes-Mask")) + thm
+pdf(sprintf("%s/tex/tables_and_figures/school-weekdeath-simple.pdf", rootdir), width=8, height=6)
+print(fig)
+dev.off()
+
+print(fig)
+
+
+
+
+## College visits
+L <- L.c
+df$college_visits_ma <- panelma(df$college_visits, df$fips, df$date, len=30)
+startdate  <- "2020-08-12"
+sdf <- subset(df, df$date>=as.Date(startdate))
+sdf <- subset(sdf, sdf$college_visits_ma>0.01)
+q <- quantile(sdf$college,probs=c(0.25,0.5,0.75),na.rm=TRUE)
+print(q)
+df$cl_dum <- NULL
+df$cl_dum[(df$cl_l==1)] <- "Low"
+df$cl_dum[(df$cl_m==1)] <- "Medium"
+df$cl_dum[(df$cl_h==1)] <- "High"
+df$cl_dum <- panellag(df$cl_dum, df$fips, df$date, L)
+sdf <- subset(df, df$date>=as.Date(startdate))
+sdf <- subset(sdf, sdf$date<=as.Date(enddate))
+sdf <- subset(sdf, sdf$college_visits_ma>0)
+sdf <- subset(sdf, (!is.na(sdf$cl_dum)) )
+sdf$pcollege_factor <- as.factor(sdf$cl_dum)
+sdf$pcollege_factor <- relevel(sdf$pcollege_factor, "Medium")
+sdf$pcollege_factor <- relevel(sdf$pcollege_factor, "High")
+sdf$dcases_capita <- 1000*sdf$dcases/sdf$PopulationEstimate2018
+sdf$xvar <- sdf$date
+sdf$yvar <- sdf$dcases_capita
+sdf$group <- sdf$pcollege_factor
+sample_sum <- sdf %>%
+  group_by(xvar, group) %>%
+  summarize(mean = mean(yvar, na.rm = TRUE),
+            sd   = sd(yvar, na.rm = TRUE),
+            percent90 = quantile(yvar,probs=0.9, na.rm=TRUE),
+            percent10 = quantile(yvar,probs=0.1, na.rm=TRUE)) %>%
+  ungroup()
+fig <- ggplot(sample_sum %>%
+              gather(stat, yvar, mean, percent10:percent90),
+            aes(x = xvar, y = yvar)) +
+  labs(title = "Average Weekly Cases by Visits to Colleges",
+       x = "Date",
+       y = "Weekly Cases Per Capita") +
+  geom_line(aes(color = group, linetype = stat) ,size=2.5)
+fig <-  fig +
+  scale_linetype(labels = c("Mean", "10 %", "90 %")) +
+  scale_color_discrete(breaks=c("High","Medium","Low")) + thm
+pdf(sprintf("%s/tex/tables_and_figures/college-weekcase.pdf", rootdir), width=8, height=6)
+print(fig)
+dev.off()
+
+print(fig)
+
+fig <- ggplot(sample_sum %>%
+              gather(stat, yvar, mean),
+            aes(x = xvar, y = yvar)) +
+  labs(x = "Date",
+       y = "Weekly Cases Per 1000") +
+  geom_line(aes(color = group) ,size=2.5)
+fig <-  fig +
+  scale_color_discrete(breaks=c("High","Medium","Low")) + thm
+pdf(sprintf("%s/tex/tables_and_figures/college-weekcase-simple.pdf", rootdir), width=8, height=6)
+print(fig)
+dev.off()
+
+
+L <- L.d
+df$college_visits_ma <- panelma(df$college_visits, df$fips, df$date, len=30)
+sdf <- subset(df, df$date>=as.Date(startdate))
+sdf <- subset(sdf, sdf$college_visits_ma>0.01)
+q <- quantile(sdf$college,probs=c(0.25,0.5,0.75),na.rm=TRUE)
+print(q)
+df$cl_dum <- NULL
+df$cl_dum[(df$cl_l==1)] <- "Low"
+df$cl_dum[(df$cl_m==1)] <- "Medium"
+df$cl_dum[(df$cl_h==1)] <- "High"
+df$cl_dum <- panellag(df$cl_dum, df$fips, df$date, L)
+sdf <- subset(df, df$date>=as.Date(startdate))
+sdf <- subset(sdf, sdf$date<=as.Date(enddate))
+sdf <- subset(sdf, sdf$college_visits_ma>0)
+sdf <- subset(sdf, (!is.na(sdf$cl_dum)) )
+sdf$pcollege_factor <- as.factor(sdf$cl_dum)
+sdf$pcollege_factor <- relevel(sdf$pcollege_factor, "Medium")
+sdf$pcollege_factor <- relevel(sdf$pcollege_factor, "High")
+sdf$xvar <- sdf$date
+sdf$yvar <- sdf$ddeath_capita
+sdf$group <- sdf$pcollege_factor
+sample_sum <- sdf %>%
+  group_by(xvar, group) %>%
+  summarize(mean = mean(yvar, na.rm = TRUE),
+            sd   = sd(yvar, na.rm = TRUE),
+            percent90 = quantile(yvar,probs=0.9, na.rm=TRUE),
+            percent10 = quantile(yvar,probs=0.1, na.rm=TRUE)) %>%
+  ungroup()
+fig <- ggplot(sample_sum %>%
+              gather(stat, yvar, mean, percent10:percent90),
+            aes(x = xvar, y = yvar)) +
+  labs(title = "Average Weekly Cases by Visits to Colleges",
+       x = "Date",
+       y = "Weekly Deaths Per Capita") +
+  geom_line(aes(color = group, linetype = stat) ,size=2.5)
+fig <-  fig +
+  scale_linetype(labels = c("Mean", "10 %", "90 %")) +
+  scale_color_discrete(breaks=c("High","Medium","Low")) + thm
+pdf(sprintf("%s/tex/tables_and_figures/college-weekdeath.pdf", rootdir), width=8, height=6)
+print(fig)
+dev.off()
+
+print(fig)
+
+fig <- ggplot(sample_sum %>%
+              gather(stat, yvar, mean),
+            aes(x = xvar, y = yvar)) +
+  labs(x = "Date",
+       y = "Weekly Deaths Per 1000") +
+  geom_line(aes(color = group) ,size=2.5)
+fig <-  fig +
+  scale_color_discrete(breaks=c("High","Medium","Low")) + thm
+pdf(sprintf("%s/tex/tables_and_figures/college-weekdeath-simple.pdf", rootdir), width=8, height=6)
+print(fig)
+dev.off()
+
+
+
+
+```

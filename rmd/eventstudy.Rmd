@@ -1,0 +1,946 @@
+---
+title       : "Covid - County Analysis"
+subtitle    : "eventstudy"
+author      :  Victor Chernozhukov, Hiro Kasahara, Paul Schrimpf
+job         :
+date        : "`r format(Sys.time(), '%d %B, %Y')`"
+bibliography: "covid.bib"
+link-citations: true
+always_allow_html: true
+output      :
+    html_document :
+        toc : true
+        toc_depth : 3
+        toc_float : true
+        number_sections : true
+        #theme : journal
+        code_folding: hide
+        self_contained : true
+        fig_width: 8
+        fig_height: 6
+---
+
+ <!-- To create html files from this, in R enter  -->
+ <!-- library(rmarkdown) -->
+ <!-- rmarkdown::render("regressionsWithPlots.Rmd") -->
+ <!-- To create tex files from this, in R enter ` -->
+ <!-- library(rmarkdown) -->
+ <!-- rmarkdown::render("regressionsWithPlots.Rmd", output_format=latex_fragment()) -->
+
+
+ <!-- to create the gh-pages hosted website in R enter -->
+ <!-- rmarkdown::render_site() -->
+
+ <!-- Then in a shell  -->
+ <!-- $ ghp-import -p -n -m "$(date)" _site -->
+
+
+
+# Data Preparation
+```{r setup, cache=FALSE, warning=FALSE, include=FALSE}
+
+library(ggplot2)
+library(ggthemes)
+library(data.table)
+#library(devtools)
+#devtools::install_github("bcallaway11/did")
+library(did)
+
+colors <-  scale_color_solarized
+colors_fill <- scale_fill_solarized
+rootdir <- system("git rev-parse --show-toplevel", intern=TRUE)[1]
+
+source(paste(rootdir,"R/countyData.R",sep="/"))
+source(paste(rootdir,"R/varlabels.R", sep="/"))
+source(paste(rootdir,"R/dataprep.R",sep="/"))
+source(paste(rootdir,"R/utils.R", sep="/"))
+
+```
+
+```{r loaddata, cache=FALSE}
+df <- countyData(redo=FALSE)
+df <- dataprep(df)
+
+# newnames <- c("logdc_L","logdc_L2")
+# for (i in (1:length(newnames))) {
+#   df[,newnames[i]] <- panellag(df$logdc, df$fips, df$date, lag=(i*7))
+# }
+# newnames <- c("logdd_L","logdd_L2")
+# for (i in (1:length(newnames))) {
+#   df[,newnames[i]] <- panellag(df$logdd, df$fips, df$date, lag=(i*7))
+# }
+
+df <- subset(df, df$date>=as.Date("2020-02-01"))
+startdate  <- "2020-04-01"
+enddate  <- "2021-12-02"
+df <- subset(df, df$date>=as.Date(startdate))
+df <- subset(df, df$date<=as.Date(enddate))
+df <- subset(df, df$fips!=0)
+length(unique(df$fips))
+unique(df$date)
+df$pgather <- df$pgather50
+
+# # generate control group's time average
+# df$t <- as.integer(df$date)
+# t <- unique(df$t)
+# newname <- c("dcase_capita_c","school_c","ddeath_capita_c","logdc_c") #,"pmask_c","pshelter_c","pgather_c")pmask
+# sdf <- data.frame(matrix( ncol= length(newname)+1, nrow =length(t)))
+# colnames(sdf) <- c(newname,"t")
+# for (i in 1:length(t)) {
+#    sdf$t[i] <- t[i]
+#    sdf$dcase_capita_c[i] <- mean(df$dcase_capita[df$premote_low==1&df$t==t[i]], na.rm=TRUE )
+#    sdf$school_c[i] <- mean(df$school[df$premote_low==1&df$t==t[i]], na.rm=TRUE )
+#    sdf$ddeath_capita_c[i] <- mean(df$ddeath_capita[df$premote_low==1&df$t==t[i]], na.rm=TRUE )
+#    sdf$logdc_c[i] <- mean(df$logdc[df$premote_low==1&df$t==t[i]], na.rm=TRUE )
+#    # sdf$pmask_c[i] <- mean(df$pmask_c[df$premote_low==1&df$t==t[i]], na.rm=TRUE )
+#    # sdf$pshelter_c[i] <- mean(df$pshelter_c[df$premote_low==1&df$t==t[i]], na.rm=TRUE )
+#    # sdf$ppgather_c[i] <- mean(df$pgather_c[df$premote_low==1&df$t==t[i]], na.rm=TRUE )
+# }
+# sdf <- merge(df,sdf,by="t")
+
+# generate control group's time average
+df$t <- as.integer(df$date)
+t <- unique(df$t)
+newname <- c("dcase_capita_c","school_c","ddeath_capita_c","logdc_c") #,"pmask_c","pshelter_c","pgather_c")pmask
+sdf <- data.frame(matrix( ncol= length(newname)+1, nrow =length(t)))
+colnames(sdf) <- c(newname,"t")
+for (i in 1:length(t)) {
+   sdf$t[i] <- t[i]
+   sdf$dcase_capita_c[i] <- mean(df$dcase_capita[df$premote==1&df$t==t[i]], na.rm=TRUE )
+   sdf$school_c[i] <- mean(df$school[df$premote==1&df$t==t[i]], na.rm=TRUE )
+   sdf$ddeath_capita_c[i] <- mean(df$ddeath_capita[df$premote==1&df$t==t[i]], na.rm=TRUE )
+   sdf$logdc_c[i] <- mean(df$logdc[df$premote==1&df$t==t[i]], na.rm=TRUE )
+   # sdf$pmask_c[i] <- mean(df$pmask_c[df$premote_low==1&df$t==t[i]], na.rm=TRUE )
+   # sdf$pshelter_c[i] <- mean(df$pshelter_c[df$premote_low==1&df$t==t[i]], na.rm=TRUE )
+   # sdf$ppgather_c[i] <- mean(df$pgather_c[df$premote_low==1&df$t==t[i]], na.rm=TRUE )
+}
+sdf <- merge(df,sdf,by="t")
+
+### Sample selection ###
+sdf$pschoolfull[sdf$portion.Unknown>0.5] <- NA
+sdf$pschoolhybrid[sdf$portion.Unknown>0.5] <- NA
+sdf$pschoolremote[sdf$portion.Unknown>0.5] <- NA
+sdf$staffmask.No[sdf$staffmask.Unknown>0.5] <- NA
+
+
+# q <- quantile(sdf$staffmask.No,prob=(0.5),na.rm=TRUE)
+q <- 0
+sdf$staff_dum <- sdf$staffmask.No
+sdf$staff_dum[sdf$staffmask.No>q] <- 1
+sdf$staff_dum[sdf$staffmask.No<=q] <- 0
+sdf$staff_dum[is.na(sdf$staffmask.No)] <- NA
+sdf$school_staff_dum <- sdf$staff_dum*sdf$school
+sdf$full_staff_dum <- sdf$staff_dum*sdf$pschoolfull
+sdf$hybrid_staff_dum <- sdf$staff_dum*sdf$pschoolhybrid
+
+
+# generate the starting date for school opening
+sdf$startday <- NA
+sdf$startday[sdf$pfull==1&!is.na(sdf$pfull)] <- sdf$start.Full[sdf$pfull==1&!is.na(sdf$pfull)]
+sdf$startday[sdf$phybrid==1&!is.na(sdf$phybrid)] <- sdf$start.Hybrid[sdf$phybrid==1&!is.na(sdf$phybrid)]
+sdf$startday[sdf$premote==1&!is.na(sdf$premote)] <- sdf$start.Remote[sdf$premote==1&!is.na(sdf$premote)]
+length(unique(sdf$fips[!is.na(sdf$startday)]))
+
+
+# selection of variables for saving memory
+p <- c("pmask","pgather50","pshelter","college","school","full_staff_dum","hybrid_staff_dum","pschoolfull","pschoolhybrid","pschoolremote",
+       "school_staff_dum","restaurant","bar","gym","church","fullwork","partwork","home")
+keep <- c(p,"logdc","logdd","dlogdc","dlogdd","dlogdd2","week","month","state","fips","date","PopulationEstimate2018","death_capita","case_capita")
+
+
+length(unique(sdf$fips))
+sdf2 <- subset(sdf, sdf$portion.Unknown<0.5)
+length(unique(sdf2$fips))  # # of counties for regression with teaching methods
+sdf2 <- subset(sdf2, sdf2$staffmask.Unknown<0.5)
+length(unique(sdf2$fips))  # # of counties for regression with teaching methods and mask requirement
+remove(sdf2)
+
+```
+
+We will consider the following ``event-study'' specification:
+
+$$ Y_{it} = \sum_{p\in\cal{P}}\sum_{w=-q}^{m} \gamma_w^p D_{\tau,it}^p   + \beta' X_{it} + \alpha_i +\epsilon_{it}$$
+where  $D_{\tau,it}^p$ takes the value equal to 1 if school has been opened for $\tau$ weeks (or will be opened after $-\tau$ weeks if $tau<0$) with teaching mode $p$ in county $i$ at day $t$. We set 8 weeks before the school opening and 22 weeks after the school opening. We take the counties with remote opening as control group so that the coefficient $\gamma_w^p$ is interpreted as the average difference in the outcome variable $Y_{it}$ between teaching mode $p$ after $\tau$ weeks of opening for $\tau>0$ (before $-\tau$ weeks of opening for $\tau<0$), where $p\in\cal{P}=\{\text{full},\text{hybrid},\text{remote}\}$ with "full," "hybrid," and "remote" means "Full opening", "Hybrid opening," and "Remote opening." $X_{it}$ contains three policy variables at county-level (mask mandates, shelter-in-place, and ban gathering).
+
+There is a well-known issue that applying the two-way fixed effects estimator may give the biased estimator when the timing of treatment differs across units (so called, staggered DiD setup), especially when the magnitude of treatment effects depends on the time since the treatment is initially enacted. Specifically, Sun and Abraham (2020) show that, in the staggered treatment design with dynamic treatment effects, the pre-treatment estimates are biased and cannot be used for testing the parallel trend assumption.
+
+First, we will divide the sample into the subsamples of observations for which school opening weeks are approximate the same such that  the treatment timing heterogeneity is not a major issue within each subsample. Then we apply the standard event-study design wihtout time fixed effects---specified as above---to each subsample and check the pre-treatment estimates for testing the parallel trend assumption. This analysis is in the spirit of  Sun and Abraham (2020) and Callaway and Sant'Anna (2020), both of which define the cohort-specific (or group-time) average treatment effect for units that receive the treatment at the same timing as a building block for analyzing various treatment effects under the staggered treatment design.
+
+Second, we also use the procedure proposed by Callaway and Sant'Anna (2020), which takes non-treated group as a control, to obtain how the dynamic treatment effects change as a function of event time, where the pre-treatment estimate provides information on the plausibility of the parallel trend assumption while the post-treatment effects indicate the presence of dynamic treatment effects.
+
+
+We now estimate the effect of different modes of school opening on school visits and cases and deaths per 1000.
+
+```{r eventstudy, eval = TRUE, cache=FALSE}
+
+
+library(tidyverse)
+library(haven)
+library(estimatr)
+library(fastDummies)
+
+thm <-  theme(legend.text = element_text(size = 18), title =element_text(size=18, face='bold'),legend.position = c(0.23, 0.8),
+              axis.text.x = element_text(size = 18), axis.text.y = element_text(size = 18),
+       # panel.grid.major = element_blank(),
+       # panel.grid.minor = element_blank(),
+        panel.background = element_rect(fill = "transparent",colour = NA),
+        plot.background = element_rect(fill = "transparent",colour = NA))
+
+# Generate weekly dummy for leads and lags
+sdf$day_full <- NA
+j_full <- which(!is.na(sdf$pfull)&(sdf$pfull==1))
+sdf$day_full[j_full]<-as.numeric(sdf$date[j_full])-as.numeric(sdf$start.Full[j_full])
+sdf$day_full <- as.integer(sdf$day_full)
+sdf$week_full <- ceiling(sdf$day_full/7)
+sdf$week_full[sdf$week_full < (-9) | (!is.na(sdf$pfull)&(sdf$pfull==0)) ] <- -9
+sdf$week_full[sdf$week_full > 22] <- 22
+sdf$day_hybrid <- NA
+j_hybrid <- which(!is.na(sdf$phybrid)&(sdf$phybrid==1))
+sdf$day_hybrid[j_hybrid]<-as.numeric(sdf$date[j_hybrid])-as.numeric(sdf$start.Hybrid[j_hybrid])
+sdf$day_hybrid <- as.integer(sdf$day_hybrid)
+sdf$week_hybrid <- ceiling(sdf$day_hybrid/7)
+sdf$week_hybrid[sdf$week_hybrid < (-9) | (!is.na(sdf$phybrid)&(sdf$phybrid==0)) ] <- -9
+sdf$week_hybrid[sdf$week_hybrid > 22] <- 22
+sdf$day_remote <- NA
+#sdf$premote <- sdf$premote_high # we will use remote opening with high school visits as additional category while remote with low school visits is our control group
+j_remote <- which(!is.na(sdf$premote)&(sdf$premote==1))
+sdf$day_remote[j_remote]<-as.numeric(sdf$date[j_remote])-as.numeric(sdf$start.Remote[j_remote])
+sdf$day_remote <- as.integer(sdf$day_remote)
+sdf$week_remote <- ceiling(sdf$day_remote/7)
+sdf$week_remote[sdf$week_remote < (-9) | (!is.na(sdf$premote)&(sdf$premote==0)) ] <- -9
+sdf$week_remote[sdf$week_remote > 22] <- 22
+# sdf$day_remote_low <- NA
+# j_remote_low <- which(!is.na(sdf$premote_low)&(sdf$premote_low==1))
+# sdf$day_remote_low[j_remote_low]<-as.numeric(sdf$date[j_remote_low])-as.numeric(sdf$start.Remote[j_remote_low])
+# sdf$day_remote_low <- as.integer(sdf$day_remote_low)
+# sdf$week_remote_low <- ceiling(sdf$day_remote_low/7)
+# sdf$week_remote_low[sdf$week_remote_low < (-9) | (!is.na(sdf$premote_low)&(sdf$premote_low==0)) ] <- -9
+# sdf$week_remote_low[sdf$week_remote_low > 22] <- 22
+
+sdf$week <- week(sdf$date)
+sdf$month <- month(sdf$date)
+　
+
+sdf <- sdf %>% mutate(
+    week_full = as_factor(week_full),
+    week_hybrid = as_factor(week_hybrid),
+    week_remote = as_factor(week_remote),
+    # week_remote_low = as_factor(week_remote_low),
+    state_dum = as_factor(state),
+    month_dum = as_factor(month),
+    week_dum = as_factor(week),
+    staff_dum = as_factor(staff_dum)
+  ) %>%　filter( !is.na(sdf$week_full) & !is.na(sdf$week_hybrid) & punknown == 0 )
+　
+
+# subsetting by the school opening dates
+subset1 <- which((sdf$startday<as.numeric(as.Date("2020-08-24")))&!is.na(sdf$startday))
+subset2 <- which((sdf$startday>=as.numeric(as.Date("2020-08-24")))&(sdf$startday<as.numeric(as.Date("2020-09-07")))&!is.na(sdf$startday))
+subset3 <- which((sdf$startday>=as.numeric(as.Date("2020-09-07")))&!is.na(sdf$startday))
+
+n1 <- length(unique(sdf$fips[subset1]))
+n2 <- length(unique(sdf$fips[subset2]))
+n3 <- length(unique(sdf$fips[subset3]))
+n <-  n1+n2+n3
+
+# School Visits
+fig_trend_fun <- function(df){
+  df %>%
+    ggplot(aes(x=week, y=value, col=variable)) +
+      labs(x = "Event Week",
+       y = "K-12 School Visits / Device") +
+  #geom_rect(aes(xmin=-6, xmax=14, ymin=-0.03, ymax=0.14), fill = "transparent",alpha = 0.01)+
+  geom_point()+
+      xlim(c(-6,14)) +
+      ylim(c(0,0.2)) +
+  geom_text(aes(label = week), hjust=-0.002, vjust = -0.03)+
+  geom_hline(yintercept = 0) +
+  geom_errorbar(aes(ymin = value-sd*1.96, ymax = value+sd*1.96), width = 0.5,
+                position = position_dodge(0.05)) +thm
+}
+reg_fun <- function(sdf) {
+  sdf$y <- sdf$school
+  sdf2 <- sdf %>%　filter( !is.na(y) )
+  reg <- felm(
+      y ~ week_full + week_hybrid + week_remote
+      | fips   | 0 | fips, data = sdf2
+  )
+  coeff <- matrix(reg$coefficients,nrow=length(reg$coefficients)/3,3)
+  se <- matrix(reg$cse,nrow=length(reg$coefficients)/3,3)
+  event_plot <- tibble(
+    In.person = coeff[1:23,1],
+    Hybrid = coeff[1:23,2],
+    Remote = coeff[1:23,3],
+    week = c(-8:14))
+  event_plot <- reshape2::melt(event_plot, id.var="week")
+  event_plot$sd <- c(se[1:23,1],se[1:23,2],se[1:23,3])
+  return(list(event_plot=event_plot,coeff=coeff,se=se))
+}
+reg1 <- reg_fun(sdf[subset1,])
+fig_trend_1 <- fig_trend_fun(reg1$event_plot)
+fig_trend_1 <- fig_trend_1 +  ggtitle("School Opening before Aug. 23, 2020")
+reg2 <- reg_fun(sdf[subset2,])
+fig_trend_2 <- fig_trend_fun(reg2$event_plot)
+fig_trend_2 <- fig_trend_2 +  ggtitle("School Opening, Aug. 24 - Sept. 6, 2020")
+reg3 <- reg_fun(sdf[subset3,])
+fig_trend_3 <- fig_trend_fun(reg3$event_plot)
+fig_trend_3 <- fig_trend_3 +  ggtitle("School Opening after Sept. 7, 2020")
+pdf(sprintf("%s/tex/tables_and_figures/event_school_trend_1.pdf",rootdir), width=8, height=6)
+print(fig_trend_1)
+dev.off()
+pdf(sprintf("%s/tex/tables_and_figures/event_school_trend_2.pdf",rootdir), width=8, height=6)
+print(fig_trend_2)
+dev.off()
+pdf(sprintf("%s/tex/tables_and_figures/event_school_trend_3.pdf",rootdir), width=8, height=6)
+print(fig_trend_3)
+dev.off()
+
+
+# Cases per 1000
+fig_trend_fun <- function(df){
+  df %>%
+    ggplot(aes(x=week, y=value, col=variable)) +
+      labs(x = "Event Week",
+       y = "Weekly Cases / 1000") +
+  #geom_rect(aes(xmin=-6, xmax=14, ymin=-0.03, ymax=0.14), fill = "transparent",alpha = 0.01)+
+  geom_point()+
+      xlim(c(-6,14)) +
+  geom_text(aes(label = week), hjust=-0.002, vjust = -0.03)+
+  geom_hline(yintercept = 0) +
+  geom_errorbar(aes(ymin = value-sd*1.96, ymax = value+sd*1.96), width = 0.5,
+                position = position_dodge(0.05)) +thm
+}
+reg_fun <- function(sdf) {
+  sdf$y <- sdf$dcase_capita
+  sdf2 <- sdf %>%　filter( !is.na(y) )
+  reg <- felm(
+      y ~  week_full + week_hybrid + week_remote
+      | fips   | 0 | fips, data = sdf2
+  )
+  coeff <- matrix(reg$coefficients,nrow=length(reg$coefficients)/3,3)
+  se <- matrix(reg$cse,nrow=length(reg$coefficients)/3,3)
+  event_plot <- tibble(
+    In.person = coeff[1:23,1],
+    Hybrid  = coeff[1:23,2],
+    Remote = coeff[1:23,3],
+    week = c(-8:14))
+  event_plot <- reshape2::melt(event_plot, id.var="week")
+  event_plot$sd <- c(se[1:23,1],se[1:23,2],se[1:23,3])
+  return(list(event_plot=event_plot,coeff=coeff,se=se))
+}
+reg1 <- reg_fun(sdf[subset1,])
+fig_trend_1 <- fig_trend_fun(reg1$event_plot)
+fig_trend_1 <- fig_trend_1 +  ggtitle("School Opening before Aug. 23, 2020")
+reg2 <- reg_fun(sdf[subset2,])
+fig_trend_2 <- fig_trend_fun(reg2$event_plot)
+fig_trend_2 <- fig_trend_2 +  ggtitle("School Opening, Aug. 24 - Sept. 6, 2020")
+reg3 <- reg_fun(sdf[subset3,])
+fig_trend_3 <- fig_trend_fun(reg3$event_plot)
+fig_trend_3 <- fig_trend_3 +  ggtitle("School Opening after Sept. 7, 2020")
+pdf(sprintf("%s/tex/tables_and_figures/event_cases_trend_1.pdf",rootdir), width=8, height=6)
+print(fig_trend_1)
+dev.off()
+pdf(sprintf("%s/tex/tables_and_figures/event_cases_trend_2.pdf",rootdir), width=8, height=6)
+print(fig_trend_2)
+dev.off()
+pdf(sprintf("%s/tex/tables_and_figures/event_cases_trend_3.pdf",rootdir), width=8, height=6)
+print(fig_trend_3)
+dev.off()
+
+# # take average over 3 subsets
+# event_plot <- tibble(
+#   In.person = (n1*reg1$coeff[1:23,1]+n2*reg2$coeff[1:23,1]+n3*reg3$coeff[1:23,1])/n,
+#   Hybrid = (n1*reg1$coeff[1:23,2]+n2*reg2$coeff[1:23,2]+n3*reg3$coeff[1:23,2])/n,
+#   Remote = (n1*reg1$coeff[1:23,3]+n2*reg2$coeff[1:23,3]+n3*reg3$coeff[1:23,3])/n,
+#   week = c(-8:14))
+# event_plot <- reshape2::melt(event_plot, id.var="week")
+# event_plot$sd <-  vector(mode="integer",length=(23*3))
+# fig_trend <- fig_trend_fun(event_plot)
+# pdf(sprintf("%s/tex/tables_and_figures/event_cases_trend.pdf",rootdir), width=8, height=6)
+# print(fig_trend)
+# dev.off()
+
+
+
+
+
+# bvars <- c("fullwork","partwork","home","bar","restaurant","gym","church")
+
+
+# log(Cases)
+fig_trend_fun <- function(df){
+  df %>%
+    ggplot(aes(x=week, y=value, col=variable)) +
+      labs(x = "Event Week",
+       y = "log(Weekly Cases)") +
+  #geom_rect(aes(xmin=-6, xmax=14, ymin=-0.03, ymax=0.14), fill = "transparent",alpha = 0.01)+
+  geom_point()+
+      xlim(c(-6,14)) +
+  geom_text(aes(label = week), hjust=-0.002, vjust = -0.03)+
+  geom_hline(yintercept = 0) +
+  geom_errorbar(aes(ymin = value-sd*1.96, ymax = value+sd*1.96), width = 0.5,
+                position = position_dodge(0.05)) +thm
+}
+reg_fun <- function(sdf) {
+  sdf$y <- sdf$logdc
+  sdf2 <- sdf %>%　filter( !is.na(y) )
+  reg <- felm(
+      y ~ week_full + week_hybrid + week_remote
+      | fips   | 0 | fips, data = sdf2
+  )
+  coeff <- matrix(reg$coefficients,nrow=length(reg$coefficients)/3,3)
+  se <- matrix(reg$cse,nrow=length(reg$coefficients)/3,3)
+  event_plot <- tibble(
+    In.person = coeff[1:23,1],
+    Hybrid = coeff[1:23,2],
+    Remote = coeff[1:23,3],
+    week = c(-8:14))
+  event_plot <- reshape2::melt(event_plot, id.var="week")
+  event_plot$sd <- c(se[1:23,1],se[1:23,2],se[1:23,3] )
+  return(list(event_plot=event_plot,coeff=coeff,se=se))
+}
+reg1 <- reg_fun(sdf[subset1,])
+fig_trend_1 <- fig_trend_fun(reg1$event_plot)
+fig_trend_1 <- fig_trend_1 +  ggtitle("School Opening before Aug. 23, 2020")
+reg2 <- reg_fun(sdf[subset2,])
+fig_trend_2 <- fig_trend_fun(reg2$event_plot)
+fig_trend_2 <- fig_trend_2 +  ggtitle("School Opening, Aug. 24 - Sept. 6, 2020")
+reg3 <- reg_fun(sdf[subset3,])
+fig_trend_3 <- fig_trend_fun(reg3$event_plot)
+fig_trend_3 <- fig_trend_3 +  ggtitle("School Opening after Sept. 7, 2020")
+pdf(sprintf("%s/tex/tables_and_figures/event_logcases_trend_1.pdf",rootdir), width=8, height=6)
+print(fig_trend_1)
+dev.off()
+pdf(sprintf("%s/tex/tables_and_figures/event_logcases_trend_2.pdf",rootdir), width=8, height=6)
+print(fig_trend_2)
+dev.off()
+pdf(sprintf("%s/tex/tables_and_figures/event_logcases_trend_3.pdf",rootdir), width=8, height=6)
+print(fig_trend_3)
+dev.off()
+
+# # take average over 3 subsets
+# event_plot <- tibble(
+#   In.person = (n1*reg1$coeff[1:23,1]+n2*reg2$coeff[1:23,1]+n3*reg3$coeff[1:23,1])/n,
+#   Hybrid = (n1*reg1$coeff[1:23,2]+n2*reg2$coeff[1:23,2]+n3*reg3$coeff[1:23,2])/n,
+#   Remote = (n1*reg1$coeff[1:23,3]+n2*reg2$coeff[1:23,3]+n3*reg3$coeff[1:23,3])/n,
+#   week = c(-8:14))
+# event_plot <- reshape2::melt(event_plot, id.var="week")
+# event_plot$sd <-  vector(mode="integer",length=(23*3))
+# fig_trend <- fig_trend_fun(event_plot)
+# pdf(sprintf("%s/tex/tables_and_figures/event_logcases_trend.pdf",rootdir), width=8, height=6)
+# print(fig_trend)
+# dev.off()
+
+
+#
+# fig_fun <- function(df){
+#   df %>%
+#   ggplot(aes(x = week, y = mean)) +
+#       labs(x = "Event Week",
+#        y = "Coefficient") +
+#   geom_rect(aes(xmin=-8, xmax=14, ymin=-0.03, ymax=0.11), fill = "transparent",alpha = 0.01)+
+#   geom_point()+
+#       xlim(c(-6,14)) +ylim(c(-0.025,0.11)) +
+#   geom_text(aes(label = week), hjust=-0.002, vjust = -0.03)+
+#   geom_hline(yintercept = 0) +
+#   geom_errorbar(aes(ymin = mean-sd*1.96, ymax = mean+sd*1.96), width = 0.2,
+#                 position = position_dodge(0.05)) +thm
+# }
+
+
+
+
+# Deaths per 1000
+fig_trend_fun <- function(df){
+  df %>%
+    ggplot(aes(x=week, y=value, col=variable)) +
+      labs(x = "Event Week",
+       y = "Weekly Deaths / 1000") +
+  #geom_rect(aes(xmin=-6, xmax=14, ymin=-0.03, ymax=0.14), fill = "transparent",alpha = 0.01)+
+  geom_point()+
+      xlim(c(-6,14)) +
+  geom_text(aes(label = week), hjust=-0.002, vjust = -0.03)+
+  geom_hline(yintercept = 0) +
+  geom_errorbar(aes(ymin = value-sd*1.96, ymax = value+sd*1.96), width = 0.5,
+                position = position_dodge(0.05)) +thm
+}
+reg_fun <- function(sdf) {
+  sdf$y <- sdf$ddeath_capita
+  sdf2 <- sdf %>%　filter( !is.na(y) )
+  reg <- felm(
+      y ~ week_full + week_hybrid + week_remote
+      | fips   | 0 | fips, data = sdf2
+  )
+  coeff <- matrix(reg$coefficients,nrow=length(reg$coefficients)/3,3)
+  se <- matrix(reg$cse,nrow=length(reg$coefficients)/3,3)
+  event_plot <- tibble(
+    In.person = coeff[1:23,1],
+    Hybrid  = coeff[1:23,2],
+    Remote = coeff[1:23,3],
+    week = c(-8:14))
+  event_plot <- reshape2::melt(event_plot, id.var="week")
+  event_plot$sd <- c(se[1:23,1],se[1:23,2],se[1:23,3])
+  return(list(event_plot=event_plot,coeff=coeff,se=se))
+}
+reg1 <- reg_fun(sdf[subset1,])
+fig_trend_1 <- fig_trend_fun(reg1$event_plot)
+fig_trend_1 <- fig_trend_1 +  ggtitle("School Opening before Aug. 23, 2020")
+reg2 <- reg_fun(sdf[subset2,])
+fig_trend_2 <- fig_trend_fun(reg2$event_plot)
+fig_trend_2 <- fig_trend_2 +  ggtitle("School Opening, Aug. 24 - Sept 6, 2020")
+reg3 <- reg_fun(sdf[subset3,])
+fig_trend_3 <- fig_trend_fun(reg3$event_plot)
+fig_trend_3 <- fig_trend_3 +  ggtitle("School Opening after Sept 7, 2020")
+
+pdf(sprintf("%s/tex/tables_and_figures/event_deaths_trend_1.pdf",rootdir), width=8, height=6)
+print(fig_trend_1)
+dev.off()
+pdf(sprintf("%s/tex/tables_and_figures/event_deaths_trend_2.pdf",rootdir), width=8, height=6)
+print(fig_trend_2)
+dev.off()
+pdf(sprintf("%s/tex/tables_and_figures/event_deaths_trend_3.pdf",rootdir), width=8, height=6)
+print(fig_trend_3)
+dev.off()
+
+
+# # take average over 3 subsets
+# event_plot <- tibble(
+#   Full = (n1*reg1$coeff[1:23,1]+n2*reg2$coeff[1:23,1]+n3*reg3$coeff[1:23,1])/n,
+#   Hybrid = (n1*reg1$coeff[1:23,2]+n2*reg2$coeff[1:23,2]+n3*reg3$coeff[1:23,2])/n,
+#   Remote = (n1*reg1$coeff[1:23,3]+n2*reg2$coeff[1:23,3]+n3*reg3$coeff[1:23,3])/n,
+#   week = c(-8:14))
+# event_plot <- reshape2::melt(event_plot, id.var="week")
+# event_plot$sd <-  vector(mode="integer",length=(23*3))
+# fig_trend <- fig_trend_fun(event_plot)
+# pdf(sprintf("%s/tex/tables_and_figures/event_deaths_trend.pdf",rootdir), width=8, height=6)
+# print(fig_trend)
+# dev.off()
+
+
+# log(Deaths)
+fig_trend_fun <- function(df){
+  df %>%
+    ggplot(aes(x=week, y=value, col=variable)) +
+      labs(x = "Event Week",
+       y = "log(Weekly Deaths)") +
+  #geom_rect(aes(xmin=-6, xmax=14, ymin=-0.03, ymax=0.14), fill = "transparent",alpha = 0.01)+
+  geom_point()+
+      xlim(c(-6,14)) +
+  geom_text(aes(label = week), hjust=-0.002, vjust = -0.03)+
+  geom_hline(yintercept = 0) +
+  geom_errorbar(aes(ymin = value-sd*1.96, ymax = value+sd*1.96), width = 0.5,
+                position = position_dodge(0.05)) +thm
+}
+reg_fun <- function(sdf) {
+  sdf$y <- sdf$logdd
+  sdf2 <- sdf %>%　filter( !is.na(y) )
+  reg <- felm(
+      y ~ week_full + week_hybrid + week_remote
+      | fips   | 0 | fips, data = sdf2
+  )
+  coeff <- matrix(reg$coefficients,nrow=length(reg$coefficients)/3,3)
+  se <- matrix(reg$cse,nrow=length(reg$coefficients)/3,3)
+  event_plot <- tibble(
+    In.person = coeff[1:23,1],
+    Hybrid = coeff[1:23,2],
+    Remote = coeff[1:23,3],
+    week = c(-8:14))
+  event_plot <- reshape2::melt(event_plot, id.var="week")
+  event_plot$sd <- c(se[1:23,1],se[1:23,2],se[1:23,3] )
+  return(list(event_plot=event_plot,coeff=coeff,se=se))
+}
+reg1 <- reg_fun(sdf[subset1,])
+fig_trend_1 <- fig_trend_fun(reg1$event_plot)
+fig_trend_1 <- fig_trend_1 +  ggtitle("School Opening before Aug. 23, 2020")
+reg2 <- reg_fun(sdf[subset2,])
+fig_trend_2 <- fig_trend_fun(reg2$event_plot)
+fig_trend_2 <- fig_trend_2 +  ggtitle("School Opening, Aug. 24 - Sept 6, 2020")
+reg3 <- reg_fun(sdf[subset3,])
+fig_trend_3 <- fig_trend_fun(reg3$event_plot)
+fig_trend_3 <- fig_trend_3 +  ggtitle("School Opening after Sept 7, 2020")
+
+pdf(sprintf("%s/tex/tables_and_figures/event_logdeaths_trend_1.pdf",rootdir), width=8, height=6)
+print(fig_trend_1)
+dev.off()
+pdf(sprintf("%s/tex/tables_and_figures/event_logdeaths_trend_2.pdf",rootdir), width=8, height=6)
+print(fig_trend_2)
+dev.off()
+pdf(sprintf("%s/tex/tables_and_figures/event_logdeaths_trend_3.pdf",rootdir), width=8, height=6)
+print(fig_trend_3)
+dev.off()
+
+
+
+```
+
+The following code generates similar event-study figures but with five different categories as in Figure 1.
+
+```{r eventstudy-mask, eval = TRUE, cache=FALSE}
+
+
+#library(tidyverse)
+library(haven)
+library(estimatr)
+library(fastDummies)
+
+thm <-  theme(legend.text = element_text(size = 18), title =element_text(size=18, face='bold'),legend.position = c(0.23, 0.8),
+              axis.text.x = element_text(size = 18), axis.text.y = element_text(size = 18),
+       # panel.grid.major = element_blank(),
+       # panel.grid.minor = element_blank(),
+        panel.background = element_rect(fill = "transparent",colour = NA),
+        plot.background = element_rect(fill = "transparent",colour = NA))
+
+# Generate weekly dummy for leads and lags
+sdf$day_full <- NA
+j_full <- which(!is.na(sdf$pfull_yes)&(sdf$pfull_yes==1))
+sdf$day_full[j_full]<-as.numeric(sdf$date[j_full])-as.numeric(sdf$start.Full[j_full])
+sdf$day_full <- as.integer(sdf$day_full)
+sdf$week_full <- ceiling(sdf$day_full/7)
+sdf$week_full[sdf$week_full < (-9) | (!is.na(sdf$pfull_yes)&(sdf$pfull_yes==0)) ] <- -9
+sdf$week_full[sdf$week_full > 22] <- 22
+sdf$day_full_no <- NA
+j_full_no <- which(!is.na(sdf$pfull_no)&(sdf$pfull_no==1))
+sdf$day_full_no[j_full_no]<-as.numeric(sdf$date[j_full_no])-as.numeric(sdf$start.Full[j_full_no])
+sdf$day_full_no <- as.integer(sdf$day_full_no)
+sdf$week_full_no <- ceiling(sdf$day_full_no/7)
+sdf$week_full_no[sdf$week_full_no < (-9) | (!is.na(sdf$pfull_no)&(sdf$pfull_no==0)) ] <- -9
+sdf$week_full_no[sdf$week_full_no > 22] <- 22
+sdf$day_hybrid <- NA
+j_hybrid <- which(!is.na(sdf$phybrid_yes)&(sdf$phybrid_yes==1))
+sdf$day_hybrid[j_hybrid]<-as.numeric(sdf$date[j_hybrid])-as.numeric(sdf$start.Hybrid[j_hybrid])
+sdf$day_hybrid <- as.integer(sdf$day_hybrid)
+sdf$week_hybrid <- ceiling(sdf$day_hybrid/7)
+sdf$week_hybrid[sdf$week_hybrid < (-9) | (!is.na(sdf$phybrid_yes)&(sdf$phybrid_yes==0)) ] <- -9
+sdf$week_hybrid[sdf$week_hybrid > 22] <- 22
+sdf$day_hybrid_no <- NA
+j_hybrid_no <- which(!is.na(sdf$phybrid_no)&(sdf$phybrid_no==1))
+sdf$day_hybrid_no[j_hybrid_no]<-as.numeric(sdf$date[j_hybrid_no])-as.numeric(sdf$start.Hybrid[j_hybrid_no])
+sdf$day_hybrid_no <- as.integer(sdf$day_hybrid_no)
+sdf$week_hybrid_no <- ceiling(sdf$day_hybrid_no/7)
+sdf$week_hybrid_no[sdf$week_hybrid_no < (-9) | (!is.na(sdf$phybrid_no)&(sdf$phybrid_no==0)) ] <- -9
+sdf$week_hybrid_no[sdf$week_hybrid_no > 22] <- 22
+sdf$day_remote <- NA
+#sdf$premote <- sdf$premote_high # we will use remote opening with high school visits as additional category while remote with low school visits is our control group
+j_remote <- which(!is.na(sdf$premote)&(sdf$premote==1))
+sdf$day_remote[j_remote]<-as.numeric(sdf$date[j_remote])-as.numeric(sdf$start.Remote[j_remote])
+sdf$day_remote <- as.integer(sdf$day_remote)
+sdf$week_remote <- ceiling(sdf$day_remote/7)
+sdf$week_remote[sdf$week_remote < (-9) | (!is.na(sdf$premote)&(sdf$premote==0)) ] <- -9
+sdf$week_remote[sdf$week_remote > 22] <- 22
+# sdf$day_remote_low <- NA
+# j_remote_low <- which(!is.na(sdf$premote_low)&(sdf$premote_low==1))
+# sdf$day_remote_low[j_remote_low]<-as.numeric(sdf$date[j_remote_low])-as.numeric(sdf$start.Remote[j_remote_low])
+# sdf$day_remote_low <- as.integer(sdf$day_remote_low)
+# sdf$week_remote_low <- ceiling(sdf$day_remote_low/7)
+# sdf$week_remote_low[sdf$week_remote_low < (-9) | (!is.na(sdf$premote_low)&(sdf$premote_low==0)) ] <- -9
+# sdf$week_remote_low[sdf$week_remote_low > 22] <- 22
+
+sdf$week <- week(sdf$date)
+sdf$month <- month(sdf$date)
+　
+
+sdf <- sdf %>% mutate(
+    week_full = as_factor(week_full),
+    week_full_no = as_factor(week_full_no),
+    week_hybrid = as_factor(week_hybrid),
+    week_hybrid_no = as_factor(week_hybrid_no),
+    week_remote = as_factor(week_remote),
+    # week_remote_low = as_factor(week_remote_low),
+    state_dum = as_factor(state),
+    month_dum = as_factor(month),
+    week_dum = as_factor(week),
+    staff_dum = as_factor(staff_dum)
+  ) %>%　filter( !is.na(sdf$week_full) & !is.na(sdf$week_hybrid) & punknown == 0 )
+　
+
+
+# subsetting by the school opening dates
+subset1 <- which((sdf$startday<as.numeric(as.Date("2020-08-24")))&!is.na(sdf$startday))
+subset2 <- which((sdf$startday>=as.numeric(as.Date("2020-08-24")))&(sdf$startday<as.numeric(as.Date("2020-09-07")))&!is.na(sdf$startday))
+subset3 <- which((sdf$startday>=as.numeric(as.Date("2020-09-07")))&!is.na(sdf$startday))
+
+n1 <- length(unique(sdf$fips[subset1]))
+n2 <- length(unique(sdf$fips[subset2]))
+n3 <- length(unique(sdf$fips[subset3]))
+n <-  n1+n2+n3
+
+# School Visits
+fig_trend_fun <- function(df){
+  df %>%
+    ggplot(aes(x=week, y=value, col=variable)) +
+      labs(x = "Event Week",
+       y = "K-12 School Visits / Device") +
+  #geom_rect(aes(xmin=-6, xmax=14, ymin=-0.03, ymax=0.14), fill = "transparent",alpha = 0.01)+
+  geom_point()+
+      xlim(c(-6,14)) +
+      ylim(c(0,0.2)) +
+  geom_text(aes(label = week), hjust=-0.002, vjust = -0.03)+
+  geom_hline(yintercept = 0) +
+  geom_errorbar(aes(ymin = value-sd*1.96, ymax = value+sd*1.96), width = 0.5,
+                position = position_dodge(0.05)) +thm
+}
+reg_fun <- function(sdf) {
+  sdf$y <- sdf$school
+  sdf2 <- sdf %>%　filter( !is.na(y) )
+  reg <- felm(
+      y ~  week_full_no +  week_full + week_hybrid_no + week_hybrid + week_remote
+      | fips   | 0 | fips, data = sdf2
+  )
+  coeff <- matrix(reg$coefficients,nrow=length(reg$coefficients)/5,5)
+  se <- matrix(reg$cse,nrow=length(reg$coefficients)/5,5)
+  event_plot <- tibble(
+    In.person_No_Mask = coeff[1:23,1],
+    In.person_Mask = coeff[1:23,2],
+    Hybrid_No_Mask = coeff[1:23,3],
+    Hybrid_Mask = coeff[1:23,4],
+    Remote = coeff[1:23,5],
+    week = c(-8:14))
+  event_plot <- reshape2::melt(event_plot, id.var="week")
+  event_plot$sd <- c(se[1:23,1],se[1:23,2],se[1:23,3],se[1:23,4],se[1:23,5])
+  return(list(event_plot=event_plot,coeff=coeff,se=se))
+}
+reg1 <- reg_fun(sdf[subset1,])
+fig_trend_1 <- fig_trend_fun(reg1$event_plot)
+fig_trend_1 <- fig_trend_1 +  ggtitle("School Opening before Aug. 23, 2020")
+reg2 <- reg_fun(sdf[subset2,])
+fig_trend_2 <- fig_trend_fun(reg2$event_plot)
+fig_trend_2 <- fig_trend_2 +  ggtitle("School Opening, Aug. 24 - Sept. 6, 2020")
+reg3 <- reg_fun(sdf[subset3,])
+fig_trend_3 <- fig_trend_fun(reg3$event_plot)
+fig_trend_3 <- fig_trend_3 +  ggtitle("School Opening after Sept. 7, 2020")
+pdf(sprintf("%s/tex/tables_and_figures/event_school_trend_mask_1.pdf",rootdir), width=8, height=6)
+print(fig_trend_1)
+dev.off()
+pdf(sprintf("%s/tex/tables_and_figures/event_school_trend_mask_2.pdf",rootdir), width=8, height=6)
+print(fig_trend_2)
+dev.off()
+pdf(sprintf("%s/tex/tables_and_figures/event_school_trend_mask_3.pdf",rootdir), width=8, height=6)
+print(fig_trend_3)
+dev.off()
+
+
+# Cases per 1000
+fig_trend_fun <- function(df){
+  df %>%
+    ggplot(aes(x=week, y=value, col=variable)) +
+      labs(x = "Event Week",
+       y = "Weekly Cases / 1000") +
+  #geom_rect(aes(xmin=-6, xmax=14, ymin=-0.03, ymax=0.14), fill = "transparent",alpha = 0.01)+
+  geom_point()+
+      xlim(c(-6,14)) +
+      ylim(c(0,0.2)) +
+  geom_text(aes(label = week), hjust=-0.002, vjust = -0.03)+
+  geom_hline(yintercept = 0) +
+  geom_errorbar(aes(ymin = value-sd*1.96, ymax = value+sd*1.96), width = 0.2,
+                position = position_dodge(0.05)) +thm
+}
+reg_fun <- function(sdf) {
+  sdf$y <- sdf$dcase_capita
+  sdf2 <- sdf %>%　filter( !is.na(y) )
+  reg <- felm(
+      y ~  week_In.person_no +  week_full + week_hybrid_no + week_hybrid + week_remote
+      | fips   | 0 | fips, data = sdf2
+  )
+  coeff <- matrix(reg$coefficients,nrow=length(reg$coefficients)/5,5)
+  se <- matrix(reg$cse,nrow=length(reg$coefficients)/5,5)
+  event_plot <- tibble(
+    In.person_No_Mask = coeff[1:23,1],
+    In.person_Mask = coeff[1:23,2],
+    Hybrid_No_Mask = coeff[1:23,3],
+    Hybrid_Mask = coeff[1:23,4],
+    Remote = coeff[1:23,5],
+    week = c(-8:14))
+  event_plot <- reshape2::melt(event_plot, id.var="week")
+  event_plot$sd <- c(se[1:23,1],se[1:23,2],se[1:23,3],se[1:23,4],se[1:23,5])
+  return(list(event_plot=event_plot,coeff=coeff,se=se))
+}
+reg1 <- reg_fun(sdf[subset1,])
+fig_trend_1 <- fig_trend_fun(reg1$event_plot)
+fig_trend_1 <- fig_trend_1 +  ggtitle("School Opening before Aug. 23, 2020")
+reg2 <- reg_fun(sdf[subset2,])
+fig_trend_2 <- fig_trend_fun(reg2$event_plot)
+fig_trend_2 <- fig_trend_2 +  ggtitle("School Opening, Aug. 24 - Sept. 6, 2020")
+reg3 <- reg_fun(sdf[subset3,])
+fig_trend_3 <- fig_trend_fun(reg3$event_plot)
+fig_trend_3 <- fig_trend_3 +  ggtitle("School Opening after Sept. 7, 2020")
+pdf(sprintf("%s/tex/tables_and_figures/event_cases_trend_mask_1.pdf",rootdir), width=8, height=6)
+print(fig_trend_1)
+dev.off()
+pdf(sprintf("%s/tex/tables_and_figures/event_cases_trend_mask_2.pdf",rootdir), width=8, height=6)
+print(fig_trend_2)
+dev.off()
+pdf(sprintf("%s/tex/tables_and_figures/event_cases_trend_mask_3.pdf",rootdir), width=8, height=6)
+print(fig_trend_3)
+dev.off()
+
+
+# log(Cases)
+fig_trend_fun <- function(df){
+  df %>%
+    ggplot(aes(x=week, y=value, col=variable)) +
+      labs(x = "Event Week",
+       y = "log(Weekly Cases)") +
+  #geom_rect(aes(xmin=-6, xmax=14, ymin=-0.03, ymax=0.14), fill = "transparent",alpha = 0.01)+
+  geom_point()+
+      xlim(c(-6,14)) +
+  geom_text(aes(label = week), hjust=-0.002, vjust = -0.03)+
+  geom_hline(yintercept = 0) +
+  geom_errorbar(aes(ymin = value-sd*1.96, ymax = value+sd*1.96), width = 0.2,
+                position = position_dodge(0.05)) +thm
+}
+reg_fun <- function(sdf) {
+  sdf$y <- sdf$logdc
+  sdf2 <- sdf %>%　filter( !is.na(y) )
+  reg <- felm(
+      y ~  week_In.person_no +  week_full + week_hybrid_no + week_hybrid + week_remote
+      | fips   | 0 | fips, data = sdf2
+  )
+  coeff <- matrix(reg$coefficients,nrow=length(reg$coefficients)/5,5)
+  se <- matrix(reg$cse,nrow=length(reg$coefficients)/5,5)
+  event_plot <- tibble(
+    In.person_No_Mask = coeff[1:23,1],
+    In.person_Mask = coeff[1:23,2],
+    Hybrid_No_Mask = coeff[1:23,3],
+    Hybrid_Mask = coeff[1:23,4],
+    Remote = coeff[1:23,5],
+    week = c(-8:14))
+  event_plot <- reshape2::melt(event_plot, id.var="week")
+  event_plot$sd <- c(se[1:23,1],se[1:23,2],se[1:23,3],se[1:23,4],se[1:23,5])
+  return(list(event_plot=event_plot,coeff=coeff,se=se))
+}
+reg1 <- reg_fun(sdf[subset1,])
+fig_trend_1 <- fig_trend_fun(reg1$event_plot)
+fig_trend_1 <- fig_trend_1 +  ggtitle("School Opening before Aug. 23, 2020")
+reg2 <- reg_fun(sdf[subset2,])
+fig_trend_2 <- fig_trend_fun(reg2$event_plot)
+fig_trend_2 <- fig_trend_2 +  ggtitle("School Opening, Aug. 24 - Sept. 6, 2020")
+reg3 <- reg_fun(sdf[subset3,])
+fig_trend_3 <- fig_trend_fun(reg3$event_plot)
+fig_trend_3 <- fig_trend_3 +  ggtitle("School Opening after Sept. 7, 2020")
+pdf(sprintf("%s/tex/tables_and_figures/event_logcases_trend_mask_1.pdf",rootdir), width=8, height=6)
+print(fig_trend_1)
+dev.off()
+pdf(sprintf("%s/tex/tables_and_figures/event_logcases_trend_mask_2.pdf",rootdir), width=8, height=6)
+print(fig_trend_2)
+dev.off()
+pdf(sprintf("%s/tex/tables_and_figures/event_logcases_trend_mask_3.pdf",rootdir), width=8, height=6)
+print(fig_trend_3)
+dev.off()
+
+
+
+
+
+# Deaths per 1000
+fig_trend_fun <- function(df){
+  df %>%
+    ggplot(aes(x=week, y=value, col=variable)) +
+      labs(x = "Event Week",
+       y = "Weekly Deaths / 1000") +
+  #geom_rect(aes(xmin=-6, xmax=14, ymin=-0.03, ymax=0.14), fill = "transparent",alpha = 0.01)+
+  geom_point()+
+      xlim(c(-6,14)) +
+  geom_text(aes(label = week), hjust=-0.002, vjust = -0.03)+
+  geom_hline(yintercept = 0) +
+  geom_errorbar(aes(ymin = value-sd*1.96, ymax = value+sd*1.96), width = 0.2,
+                position = position_dodge(0.05)) +thm
+}
+reg_fun <- function(sdf) {
+  sdf$y <- sdf$ddeath_capita
+  sdf2 <- sdf %>%　filter( !is.na(y) )
+  reg <- felm(
+      y ~  week_full_no +  week_full + week_hybrid_no + week_hybrid + week_remote
+      | fips   | 0 | fips, data = sdf2
+  )
+  coeff <- matrix(reg$coefficients,nrow=length(reg$coefficients)/5,5)
+  se <- matrix(reg$cse,nrow=length(reg$coefficients)/5,5)
+  event_plot <- tibble(
+    In.person_No_Mask = coeff[1:23,1],
+    In.person_Mask = coeff[1:23,2],
+    Hybrid_No_Mask = coeff[1:23,3],
+    Hybrid_Mask = coeff[1:23,4],
+    Remote = coeff[1:23,5],
+    week = c(-8:14))
+  event_plot <- reshape2::melt(event_plot, id.var="week")
+  event_plot$sd <- c(se[1:23,1],se[1:23,2],se[1:23,3],se[1:23,4],se[1:23,5])
+  return(list(event_plot=event_plot,coeff=coeff,se=se))
+}
+reg1 <- reg_fun(sdf[subset1,])
+fig_trend_1 <- fig_trend_fun(reg1$event_plot)
+fig_trend_1 <- fig_trend_1 +  ggtitle("School Opening before Aug. 23, 2020")
+reg2 <- reg_fun(sdf[subset2,])
+fig_trend_2 <- fig_trend_fun(reg2$event_plot)
+fig_trend_2 <- fig_trend_2 +  ggtitle("School Opening, Aug. 24 - Sept 6, 2020")
+reg3 <- reg_fun(sdf[subset3,])
+fig_trend_3 <- fig_trend_fun(reg3$event_plot)
+fig_trend_3 <- fig_trend_3 +  ggtitle("School Opening after Sept 7, 2020")
+
+pdf(sprintf("%s/tex/tables_and_figures/event_deaths_trend_mask_1.pdf",rootdir), width=8, height=6)
+print(fig_trend_1)
+dev.off()
+pdf(sprintf("%s/tex/tables_and_figures/event_deaths_trend_mask_2.pdf",rootdir), width=8, height=6)
+print(fig_trend_2)
+dev.off()
+pdf(sprintf("%s/tex/tables_and_figures/event_deaths_trend_mask_3.pdf",rootdir), width=8, height=6)
+print(fig_trend_3)
+dev.off()
+
+
+
+# log(Deaths)
+fig_trend_fun <- function(df){
+  df %>%
+    ggplot(aes(x=week, y=value, col=variable)) +
+      labs(x = "Event Week",
+       y = "log(Weekly Deaths)") +
+  #geom_rect(aes(xmin=-6, xmax=14, ymin=-0.03, ymax=0.14), fill = "transparent",alpha = 0.01)+
+  geom_point()+
+      xlim(c(-6,14)) +
+  geom_text(aes(label = week), hjust=-0.002, vjust = -0.03)+
+  geom_hline(yintercept = 0) +
+  geom_errorbar(aes(ymin = value-sd*1.96, ymax = value+sd*1.96), width = 0.2,
+                position = position_dodge(0.05)) +thm
+}
+reg_fun <- function(sdf) {
+  sdf$y <- sdf$logdd
+  sdf2 <- sdf %>%　filter( !is.na(y) )
+  reg <- felm(
+      y ~  week_full_no +  week_full + week_hybrid_no + week_hybrid + week_remote
+      | fips   | 0 | fips, data = sdf2
+  )
+  coeff <- matrix(reg$coefficients,nrow=length(reg$coefficients)/5,5)
+  se <- matrix(reg$cse,nrow=length(reg$coefficients)/5,5)
+  event_plot <- tibble(
+    In.person_No_Mask = coeff[1:23,1],
+    In.person_Mask = coeff[1:23,2],
+    Hybrid_No_Mask = coeff[1:23,3],
+    Hybrid_Mask = coeff[1:23,4],
+    Remote = coeff[1:23,5],
+    week = c(-8:14))
+  event_plot <- reshape2::melt(event_plot, id.var="week")
+  event_plot$sd <- c(se[1:23,1],se[1:23,2],se[1:23,3],se[1:23,4],se[1:23,5])
+  return(list(event_plot=event_plot,coeff=coeff,se=se))
+}
+reg1 <- reg_fun(sdf[subset1,])
+fig_trend_1 <- fig_trend_fun(reg1$event_plot)
+fig_trend_1 <- fig_trend_1 +  ggtitle("School Opening before Aug. 23, 2020")
+reg2 <- reg_fun(sdf[subset2,])
+fig_trend_2 <- fig_trend_fun(reg2$event_plot)
+fig_trend_2 <- fig_trend_2 +  ggtitle("School Opening, Aug. 24 - Sept 6, 2020")
+reg3 <- reg_fun(sdf[subset3,])
+fig_trend_3 <- fig_trend_fun(reg3$event_plot)
+fig_trend_3 <- fig_trend_3 +  ggtitle("School Opening after Sept 7, 2020")
+
+pdf(sprintf("%s/tex/tables_and_figures/event_logdeaths_trend_mask_1.pdf",rootdir), width=8, height=6)
+print(fig_trend_1)
+dev.off()
+pdf(sprintf("%s/tex/tables_and_figures/event_logdeaths_trend_mask_2.pdf",rootdir), width=8, height=6)
+print(fig_trend_2)
+dev.off()
+pdf(sprintf("%s/tex/tables_and_figures/event_logdeaths_trend_mask_3.pdf",rootdir), width=8, height=6)
+print(fig_trend_3)
+dev.off()
+
+
+
+```

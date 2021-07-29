@@ -1,0 +1,3440 @@
+---
+title       : "Covid - County Analysis"
+subtitle    : "Regressions"
+author      :  Victor Chernozhukov, Hiro Kasahara, Paul Schrimpf
+job         :
+date        : "`r format(Sys.time(), '%d %B, %Y')`"
+bibliography: "covid.bib"
+link-citations: true
+always_allow_html: true
+output      :
+    html_document :
+        toc : true
+        toc_depth : 3
+        toc_float : true
+        number_sections : true
+        #theme : journal
+        code_folding: hide
+        self_contained : true
+        fig_width: 8
+        fig_height: 6
+---
+
+ <!-- To create html files from this, in R enter  -->
+ <!-- library(rmarkdown) -->
+ <!-- rmarkdown::render("regressionsWithPlots.Rmd") -->
+ <!-- To create tex files from this, in R enter ` -->
+ <!-- library(rmarkdown) -->
+ <!-- rmarkdown::render("regressionsWithPlots.Rmd", output_format=latex_fragment()) -->
+
+
+ <!-- to create the gh-pages hosted website in R enter -->
+ <!-- rmarkdown::render_site() -->
+
+ <!-- Then in a shell  -->
+ <!-- $ ghp-import -p -n -m "$(date)" _site -->
+
+
+```{r, include=FALSE}
+options(knitr.table.format = function() {
+  if (knitr::is_latex_output()) 'latex' else 'pandoc'
+})
+if (knitr::is_latex_output()) {
+  knitr::opts_chunk$set(warning=FALSE, message=FALSE, echo=FALSE)
+}
+```
+
+
+# Data Preparation
+```{r setup, cache=FALSE, warning=FALSE, include=FALSE}
+
+library(lfe)
+library(stargazer)
+library(knitr)
+library(plm)
+library(latex2exp)
+library(ggplot2)
+library(ggthemes)
+library(mvtnorm)
+library(kableExtra)
+library(data.table) 
+library(readxl)  
+library(dplyr)
+library(dotwhisker)
+library(latex2exp)
+library(parallel) 
+detectCores()
+  
+
+
+sgtype <- opts_knit$get("rmarkdown.pandoc.to")
+sgstyle <- 'default'
+colors <-  scale_color_solarized
+colors_fill <- scale_fill_solarized
+rootdir <- system("git rev-parse --show-toplevel", intern=TRUE)[1]
+
+source(paste(rootdir,"R/countyData.R",sep="/"))
+source(paste(rootdir,"R/varlabels.R", sep="/"))
+source(paste(rootdir,"R/dataprep.R",sep="/"))
+source(paste(rootdir,"R/utils.R", sep="/"))
+countyvars <-
+  c("PopulationEstimate2018",
+    "PopulationDensityperSqMile2010",
+    "Smokers_Percentage",
+  "Social.Association.Rate",
+    "DiabetesPercentage",
+    "MedianAge2010",
+    "dem_to_rep_ratio",
+    "HPSAShortage")
+L.d <- 35
+L.c <- 14
+source(paste(rootdir,"rmd/generatetables.R",sep="/"))
+```
+
+```{r loaddata, cache=FALSE}
+df <- countyData(redo=FALSE)  
+df <- dataprep(df)   
+
+# newnames <- c("logdc_L","logdc_L2")
+# for (i in (1:length(newnames))) {
+#   df[,newnames[i]] <- panellag(df$logdc, df$fips, df$date, lag=(i*7))
+# } 
+# newnames <- c("logdd_L","logdd_L2")
+# for (i in (1:length(newnames))) {
+#   df[,newnames[i]] <- panellag(df$logdd, df$fips, df$date, lag=(i*7))
+# } 
+  
+df <- as.data.frame(df)
+df <- subset(df, df$date>=as.Date("2020-02-01")) 
+startdate  <- "2020-04-01" 
+enddate  <- "2020-12-02"
+sdf <- subset(df, df$date>=as.Date(startdate))
+sdf <- subset(sdf, sdf$date<=as.Date(enddate))  
+sdf <- subset(sdf, sdf$fips!=0)   
+length(unique(sdf$fips))
+unique(sdf$date)
+sdf$pgather <- sdf$pgather50   
+ 
+sdf <- as.data.frame(sdf)
+
+
+### Sample selection ###
+sdf$pschoolfull[sdf$portion.Unknown>0.5] <- NA
+sdf$pschoolhybrid[sdf$portion.Unknown>0.5] <- NA
+sdf$pschoolremote[sdf$portion.Unknown>0.5] <- NA
+sdf$staffmask.No[sdf$staffmask.Unknown>0.5] <- NA
+
+     
+# q <- quantile(sdf$staffmask.No,prob=(0.5),na.rm=TRUE)
+q <- 0
+sdf$staff_dum <- sdf$staffmask.No
+sdf$staff_dum[sdf$staffmask.No>q] <- 1
+sdf$staff_dum[sdf$staffmask.No<=q] <- 0
+sdf$staff_dum[is.na(sdf$staffmask.No)] <- NA
+sdf$school_staff_dum <- sdf$staff_dum*sdf$school
+sdf$full_staff_dum <- sdf$staff_dum*sdf$pschoolfull
+sdf$hybrid_staff_dum <- sdf$staff_dum*sdf$pschoolhybrid 
+  
+
+# selection of variables for saving memory
+p <- c("pmask","pgather50","pshelter","college","school","full_staff_dum","hybrid_staff_dum","pschoolfull","pschoolhybrid","pschoolremote",
+       "school_staff_dum","restaurant","bar","gym","church","fullwork","partwork","home") 
+keep <- c(p,"logdc","logdd","dlogdc","dlogdd","dlogdd2","week","month","state","fips","date","PopulationEstimate2018","death_capita","case_capita") 
+  
+
+length(unique(sdf$fips)) 
+sdf2 <- subset(sdf, sdf$portion.Unknown<0.5) 
+length(unique(sdf2$fips))  # # of counties for regression with teaching methods
+sdf2 <- subset(sdf2, sdf2$staffmask.Unknown<0.5)
+length(unique(sdf2$fips))  # # of counties for regression with teaching methods and mask requirement
+remove(sdf2)
+ 
+```
+
+
+# Empirical Results
+ 
+## Summary Statistics and Correlations
+
+```{r corr, cache=FALSE}
+
+
+
+pols  <-  c("college","school","pschoolfull","pschoolhybrid","pschoolremote","staff_dum","pmask","pgather50","pshelter") 
+bvars <- c("fullwork","partwork","home","bar","restaurant","gym","church")
+xvars <- c("dlogtests","pop")
+yvars <- c("dlogdc","dlogdd","logdc","logdd") 
+sdf$pop <- sdf$PopulationEstimate2018/1000000
+
+sdf2 <- subset(sdf, sdf$date>=as.Date("2020-04-15")) 
+sdf2 <- sdf2[,c(yvars,pols,bvars,xvars)] 
+tbl <- stargazer(sdf2)
+texfile <- sprintf("%s/tex/tables_and_figures/summary.tex",rootdir)
+cat(paste(tbl[c(-1,-2,-3,-4, -length(tbl))], collapse="\n"), file=texfile)
+ 
+sdf2 <- subset(sdf, sdf$date>=as.Date("2020-04-15")) 
+cmat <-  cor(sdf2[,c(pols,bvars)], use="pairwise.complete.obs")
+scmat <- matrix(sprintf("%.2f",cmat),nrow=(length(pols)+length(bva3rs)))
+
+rownames(scmat) <- getlabel(rownames(cmat))
+colnames(scmat) <- getlabel(colnames(cmat))
+scmat[upper.tri(cmat)] <- "" 
+
+ltbl <- knitr::kable(scmat, format="latex", booktabs=TRUE, escape=FALSE,
+              align=(rep("c",ncol(scmat)))) %>%
+  row_spec(0, angle = 90)
+cat(ltbl, file=paste(rootdir,"tex/tables_and_figures/corr.tex",sep="/"))
+
+knitr::kable(scmat)
+```
+
+
+For the analysis of school reopening, we focus on observations after
+July 1, 2020. There are `r length(unique(df$date))` days of
+observations from `r length(unique(df$fips))` counties.
+We have information on school district reopening for
+`r length(unique(sdf$fips))` of the counties.
+These counties constitute
+`r 100*sum(subset(sdf,date==startdate)$PopulationEstimate2018, na.rm=TRUE)/
+   sum(subset(df,date==startdate)$PopulationEstimate2018, na.rm=TRUE)`\% of the
+population. Throughout this document we limit the sample to these
+counties with school opening information.
+
+
+The data classifies school reopening plans into three categories:
+
+1. Full in-person
+2. Hybrid in-person and remote
+3. Remote
+
+The folowing figure shows the (unweighted) portion of counties with
+schools open by plan and day.
+
+```{r plotopening, eval=FALSE, cache=FALSE}
+
+# using the opening data from MCH
+startdates <- c("start.Full",
+                "start.Remote",
+                "start.Hybrid",
+                "start.Unknown")
+enddates <- rep(NA, 3)  
+pvars <- c("In-person", "Remote", "Hybrid", "Unknown")
+for(i in 1:length(startdates)) sdf[,pvars[i]] <-
+                                 smoothedpolicy(sdf,startdates[i],enddatevar=enddates[i],type="ma",bw=1, id="fips")
+haveschool=apply(sdf, 1, function(row) any(!is.na(row[startdates])))
+portionnames  <- sub("start","portion",startdates[grep("start\\.",startdates)])
+for (i in 1:length(pvars)) {
+  sdf[,pvars[i]] <- sdf[,pvars[i]]*sdf[,portionnames[i]]
+  sdf[!haveschool,pvars[i]] <- NA
+}
+
+dt <- data.table(sdf)
+pvars <- c("In-person", "Remote", "Hybrid", "Unknown")
+figdata <- melt(dt[,lapply(.SD, mean, na.rm=TRUE), by=date,  .SDcols=pvars],
+                id.vars="date", variable.name="plan")
+fig  <-  ggplot(data=figdata, aes(x=date,y=value, colour=plan))  +
+    geom_line(aes(x=date,y=value, colour=plan) ,size=1.5)  + 
+    xlim(c(as.Date("2020-07-01"), as.Date(enddate))) +
+  ylab("portion of counties") + figtheme + ggtitle("School reopening")
+pdf(sprintf("%s/tex/tables_and_figures/ew-opening.pdf",rootdir), width=7, height=3.5)
+print(fig)
+dev.off()
+ 
+# using the opening data from EdWeek 
+startdates <- c("start.Full2",
+                "start.Remote2",
+                "start.Hybrid2") 
+pvars <- c("in-person", "remote", "hybrid")
+for(i in 1:length(startdates)) sdf[,pvars[i]] <-
+                                 smoothedpolicy(sdf,startdates[i],enddatevar=enddates[i],type="ma",bw=1, id="fips")
+haveschool=apply(sdf, 1, function(row) any(!is.na(row[startdates])))
+portionnames  <- sub("start","portion",startdates[grep("start\\.",startdates)])
+for (i in 1:length(pvars)) {
+  sdf[,pvars[i]] <- sdf[,pvars[i]]*sdf[,portionnames[i]]
+  sdf[!haveschool,pvars[i]] <- NA
+}
+
+dt <- data.table(sdf)
+pvars <- c("in-person", "remote", "hybrid")
+figdata <- melt(dt[,lapply(.SD, mean, na.rm=TRUE), by=date,  .SDcols=pvars],
+                id.vars="date", variable.name="plan")
+fig  <-  ggplot(data=figdata, aes(x=date,y=value, colour=plan))  +
+    geom_line(aes(x=date,y=value, colour=plan) ,size=1.5)  + 
+    xlim(c(as.Date("2020-07-01"), as.Date(enddate))) +
+  ylab("portion of counties") + figtheme + ggtitle("School reopening")
+pdf(sprintf("%s/tex/tables_and_figures/ew-opening2.pdf",rootdir), width=7, height=3.5)
+print(fig)
+dev.off()
+  
+pvars <- c("mask-mandate", "stay-at-home", "ban-gathering") 
+dt[,"mask-mandate"] <- dt$pmask
+dt[,"stay-at-home"] <- dt$pshelter
+dt[,"ban-gathering"] <- dt$pgather50
+figdata <- melt(dt[,lapply(.SD, mean, na.rm=TRUE), by=date,  .SDcols=pvars],
+                id.vars="date", variable.name="policy")
+fig  <-  ggplot(data=figdata, aes(x=date,y=value, colour=policy))  +
+    geom_line(aes(x=date,y=value, colour=policy) ,size=1.5)   + 
+    xlim(c(as.Date("2020-04-01"), as.Date(enddate))) +
+  ylab("portion of counties") + figtheme + ggtitle("County-level policies")
+pdf(sprintf("%s/tex/tables_and_figures/jyw-policy.pdf",rootdir), width=7, height=3.5)
+print(fig)
+dev.off()  
+```
+
+
+
+## Cases
+
+
+```{r piy, eval = FALSE, cache=FALSE, warning=FALSE, results='asis'}
+ 
+# Mask requirement for staffs  
+# infov <- c("logdc", "logdc_L", "logdc_L2")   
+infov <- c("logdc", "lag(logdc,7)", "lag(logdc,14)")   
+sdf$week <- week(sdf$date) 
+#interactions <-list("as.factor(month)", "as.factor(state)")  
+interactions2 <-list("as.factor(week)", "as.factor(state)")    
+infolist <- list(infov)
+ilist <- list(interactions2)
+xvars <- ""
+xlist <- list(xvars)
+iv <- list("0")
+fe <- list("fips")
+tvars <- "dlogtests" # this is state-level testing variable 
+pols1  <-  c("pmask","pgather50","pshelter","college","school") 
+pols2  <-  c("pmask","pgather50","pshelter","college","school","school_staff_dum")
+pols3  <-  c("pmask","pgather50","pshelter","college","pschoolfull","pschoolhybrid","pschoolremote")  
+pols4  <-  c("pmask","pgather50","pshelter","college","pschoolfull","pschoolhybrid","pschoolremote",
+             "full_staff_dum","hybrid_staff_dum")   
+yvars <- "dlogdc"
+plist <- list(pols1,pols2,pols3,pols4)   
+cluster = "state" 
+debias = TRUE
+includepbiy <- FALSE
+includepiy <- TRUE
+includepib <- FALSE     
+includeip <- FALSE
+
+L <- L.c  
+
+### to save memory ###
+remove(df)
+# keep <- c(pols2,pols4,"logdc","week","state","fips","date",tvars,yvars)
+# sdf <- sdf[,keep]
+regs <- mainregressions(sdf,
+                        yvars, plist, bvars, infolist, tvars,
+                        xlist, ilist, iv, fe=fe, L=L, cluster=cluster, debias = debias, 
+                        includepbiy=includepbiy,includepiy=includepiy,includepib=includepib
+                        ) 
+if (debias) { 
+    savetextables(NULL, NULL, regs$piy, prefix="cases") 
+} else { 
+    savetextables(NULL, NULL, regs$piy, prefix="cases-fe") 
+}
+  
+
+
+# # Check robustness with respect to s in debiased estimator #
+# source(paste(rootdir,"rmd/generatetables2.R",sep="/"))
+# remove(df)
+# # keep <- c(pols2,pols4,"logdc","week","state","fips","date",tvars,yvars)
+# # sdf <- sdf[,keep]
+# regs <- mainregressions(sdf,
+#                         yvars, plist, bvars, infolist, tvars,
+#                         xlist, ilist, iv, fe=fe, L=L, cluster=cluster, debias = debias, 
+#                         includepbiy=includepbiy,includepiy=includepiy,includepib=includepib
+#                         ) 
+# if (debias) { 
+#     savetextables(NULL, NULL, regs$piy, prefix="cases2") 
+# } else { 
+#     savetextables(NULL, NULL, regs$piy, prefix="cases2-fe") 
+# }
+# source(paste(rootdir,"rmd/generatetables.R",sep="/"))
+
+
+```
+
+We may re-interpret our model with the log changes in cases as outcome variable as the model using the log of cases as outcome variable with lagged dependent variables.
+Specifically, a modified version of our model is 
+$$
+y_{it}-y_{it-14} = \sum_{m =\text{remote,\ hybrid,\ full}} \beta_{m}  p^m_{it} + \sum_{\tau=14,21,28} \beta_{y,\tau} y_{i,t-\tau} +\alpha_i +\zeta_t + \epsilon_{it},
+$$
+where $y_{it}$ is the log of weekly cases in day $t$; $p_{it}^m$ is a variable for school opening in teaching mode $m$ with $m\in\text{remote,\ hybrid,\ full}$, and we use the lagged log cases with 2, 3, and 4 weeks lag length.  This regression model can be written as:
+$$
+ y_{it}  =  \sum_{m =\text{remote,  hybrid,  full}} \beta_{m}  p^m_{it} +   \sum_{\tau=14,21,28} \tilde\beta_{y,\tau} y_{i,t-\tau} +\alpha_i +\zeta_t + \epsilon_{it}
+$$
+with $\tilde\beta_{y,14}=1+\beta_{y,14}$ and $\tilde\beta_{y,\tau}=\beta_{y,\tau}$ for $\tau=21,28$. For robustness check, we estimate this alternative specification.
+
+
+
+```{r piy-alt, eval = FALSE, cache=FALSE, warning=FALSE, results='asis'}
+ 
+# using the level rather than the growth as outcome variable
+
+# Mask requirement for staffs  
+# infov <- c("logdc", "logdc_L", "logdc_L2")   
+infov <- c("logdc", "lag(logdc,7)", "lag(logdc,14)")   
+sdf$week <- week(sdf$date) 
+#interactions <-list("as.factor(month)", "as.factor(state)")  
+interactions2 <-list("as.factor(week)", "as.factor(state)")    
+infolist <- list(infov)
+ilist <- list(interactions2)
+xvars <- ""
+xlist <- list(xvars)
+iv <- list("0")
+fe <- list("fips")
+tvars <- "dlogtests" # this is state-level testing variable 
+pols1  <-  c("pmask","pgather50","pshelter","college","school") 
+pols2  <-  c("pmask","pgather50","pshelter","college","school","school_staff_dum")
+pols3  <-  c("pmask","pgather50","pshelter","college","pschoolfull","pschoolhybrid","pschoolremote")  
+pols4  <-  c("pmask","pgather50","pshelter","college","pschoolfull","pschoolhybrid","pschoolremote",
+             "full_staff_dum","hybrid_staff_dum")   
+yvars <- "logdc"
+plist <- list(pols1,pols2,pols3,pols4)   
+cluster = "state" 
+debias = TRUE
+
+includepbiy <- FALSE
+includepiy <- TRUE
+includepib <- FALSE     
+includeip <- FALSE
+
+L <- L.c  
+
+### to save memory ###
+remove(df)
+# keep <- c(pols2,pols4,"logdc","week","state","fips","date",tvars,yvars)
+# sdf <- sdf[,keep]
+regs <- mainregressions(sdf,
+                        yvars, plist, bvars, infolist, tvars,
+                        xlist, ilist, iv, fe=fe, L=L, cluster=cluster, debias = debias, 
+                        includepbiy=includepbiy,includepiy=includepiy,includepib=includepib
+                        ) 
+if (debias) { 
+    savetextables(NULL, NULL, regs$piy, prefix="cases-alt") 
+} else { 
+    savetextables(NULL, NULL, regs$piy, prefix="cases-alt-fe") 
+}
+  
+ 
+```
+
+```{r piy-alt1, eval = FALSE, cache=FALSE, warning=FALSE, results='asis'}
+ 
+# using the level rather than the growth as outcome variable
+ 
+  
+sdf$logdc_F7 <- panellag(sdf$logdc, sdf$fips, sdf$date, lag=-7)  
+# Mask requirement for staffs  
+# infov <- c("logdc", "logdc_L", "logdc_L2")   
+infov <- c("logdc_F7", "logdc", "lag(logdc,7)", "lag(logdc,14)")   
+sdf$week <- week(sdf$date) 
+#interactions <-list("as.factor(month)", "as.factor(state)")  
+interactions2 <-list("as.factor(week)", "as.factor(state)")    
+infolist <- list(infov)
+ilist <- list(interactions2)
+xvars <- ""
+xlist <- list(xvars)
+iv <- list("0")
+fe <- list("fips")
+tvars <- "dlogtests" # this is state-level testing variable 
+pols1  <-  c("pmask","pgather50","pshelter","college","school") 
+pols2  <-  c("pmask","pgather50","pshelter","college","school","school_staff_dum")
+pols3  <-  c("pmask","pgather50","pshelter","college","pschoolfull","pschoolhybrid","pschoolremote")  
+pols4  <-  c("pmask","pgather50","pshelter","college","pschoolfull","pschoolhybrid","pschoolremote",
+             "full_staff_dum","hybrid_staff_dum")   
+yvars <- "logdc"
+plist <- list(pols1,pols2,pols3,pols4)   
+cluster = "state" 
+debias = TRUE
+
+includepbiy <- FALSE
+includepiy <- TRUE
+includepib <- FALSE     
+includeip <- FALSE
+
+L <- L.c  
+
+### to save memory ###
+remove(df)
+# keep <- c(pols2,pols4,"logdc","week","state","fips","date",tvars,yvars)
+# sdf <- sdf[,keep]
+regs <- mainregressions(sdf,
+                        yvars, plist, bvars, infolist, tvars,
+                        xlist, ilist, iv, fe=fe, L=L, cluster=cluster, debias = debias, 
+                        includepbiy=includepbiy,includepiy=includepiy,includepib=includepib
+                        ) 
+if (debias) { 
+    savetextables(NULL, NULL, regs$piy, prefix="cases-alt1") 
+} else { 
+    savetextables(NULL, NULL, regs$piy, prefix="cases-alt1-fe") 
+}
+  
+ 
+```
+
+```{r piy-alt0, eval = FALSE, cache=FALSE, warning=FALSE, results='asis'}
+ 
+# Mask requirement for staffs  
+# infov <- c("logdc", "logdc_L", "logdc_L2")   
+infov <- c("logdc", "lag(logdc,7)", "lag(logdc,14)")   
+sdf$week <- week(sdf$date) 
+#interactions <-list("as.factor(month)", "as.factor(state)")  
+interactions2 <-list("as.factor(week)", "as.factor(state)")    
+infolist <- list(infov)
+ilist <- list(interactions2)
+xvars <- ""
+xlist <- list(xvars)
+iv <- list("0")
+fe <- list("fips")
+tvars <- "dlogtests" # this is state-level testing variable 
+pols1  <-  c("pmask","pgather50","pshelter","college","school") 
+pols2  <-  c("pmask","pgather50","pshelter","college","school","school_staff_dum")
+pols3  <-  c("pmask","pgather50","pshelter","college","pschoolfull","pschoolhybrid","pschoolremote")  
+pols4  <-  c("pmask","pgather50","pshelter","college","pschoolfull","pschoolhybrid","pschoolremote",
+             "full_staff_dum","hybrid_staff_dum")   
+yvars <- "d2logdc"
+plist <- list(pols1,pols2,pols3,pols4)   
+cluster = "state" 
+debias = TRUE
+includepbiy <- FALSE
+includepiy <- TRUE
+includepib <- FALSE     
+includeip <- FALSE
+
+L <- L.c  
+
+### to save memory ###
+remove(df)
+# keep <- c(pols2,pols4,"logdc","week","state","fips","date",tvars,yvars)
+# sdf <- sdf[,keep]
+regs <- mainregressions(sdf,
+                        yvars, plist, bvars, infolist, tvars,
+                        xlist, ilist, iv, fe=fe, L=L, cluster=cluster, debias = debias, 
+                        includepbiy=includepbiy,includepiy=includepiy,includepib=includepib
+                        ) 
+if (debias) { 
+    savetextables(NULL, NULL, regs$piy, prefix="cases-alt0") 
+} else { 
+    savetextables(NULL, NULL, regs$piy, prefix="cases-alt0-fe") 
+}
+  
+
+
+# # Check robustness with respect to s in debiased estimator #
+# source(paste(rootdir,"rmd/generatetables2.R",sep="/"))
+# remove(df)
+# # keep <- c(pols2,pols4,"logdc","week","state","fips","date",tvars,yvars)
+# # sdf <- sdf[,keep]
+# regs <- mainregressions(sdf,
+#                         yvars, plist, bvars, infolist, tvars,
+#                         xlist, ilist, iv, fe=fe, L=L, cluster=cluster, debias = debias, 
+#                         includepbiy=includepbiy,includepiy=includepiy,includepib=includepib
+#                         ) 
+# if (debias) { 
+#     savetextables(NULL, NULL, regs$piy, prefix="cases2") 
+# } else { 
+#     savetextables(NULL, NULL, regs$piy, prefix="cases2-fe") 
+# }
+# source(paste(rootdir,"rmd/generatetables.R",sep="/"))
+
+
+```
+
+```{r piy-alt0-L21, eval = FALSE, cache=FALSE, warning=FALSE, results='asis'}
+ 
+# Mask requirement for staffs  
+# infov <- c("logdc", "logdc_L", "logdc_L2")   
+infov <- c("logdc", "lag(logdc,7)", "lag(logdc,14)")   
+sdf$week <- week(sdf$date) 
+#interactions <-list("as.factor(month)", "as.factor(state)")  
+interactions2 <-list("as.factor(week)", "as.factor(state)")    
+infolist <- list(infov)
+ilist <- list(interactions2)
+xvars <- ""
+xlist <- list(xvars)
+iv <- list("0")
+fe <- list("fips")
+tvars <- "dlogtests" # this is state-level testing variable 
+pols1  <-  c("pmask","pgather50","pshelter","college","school") 
+pols2  <-  c("pmask","pgather50","pshelter","college","school","school_staff_dum")
+pols3  <-  c("pmask","pgather50","pshelter","college","pschoolfull","pschoolhybrid","pschoolremote")  
+pols4  <-  c("pmask","pgather50","pshelter","college","pschoolfull","pschoolhybrid","pschoolremote",
+             "full_staff_dum","hybrid_staff_dum")   
+yvars <- "d2logdc"
+plist <- list(pols1,pols2,pols3,pols4)   
+cluster = "state" 
+debias = TRUE
+includepbiy <- FALSE
+includepiy <- TRUE
+includepib <- FALSE     
+includeip <- FALSE
+
+L <- 21 # L.c  
+
+### to save memory ###
+remove(df)
+# keep <- c(pols2,pols4,"logdc","week","state","fips","date",tvars,yvars)
+# sdf <- sdf[,keep]
+regs <- mainregressions(sdf,
+                        yvars, plist, bvars, infolist, tvars,
+                        xlist, ilist, iv, fe=fe, L=L, cluster=cluster, debias = debias, 
+                        includepbiy=includepbiy,includepiy=includepiy,includepib=includepib
+                        ) 
+if (debias) { 
+    savetextables(NULL, NULL, regs$piy, prefix="cases-alt0-L21") 
+} else { 
+    savetextables(NULL, NULL, regs$piy, prefix="cases-alt0-L21-fe") 
+}
+  
+
+
+# # Check robustness with respect to s in debiased estimator #
+# source(paste(rootdir,"rmd/generatetables2.R",sep="/"))
+# remove(df)
+# # keep <- c(pols2,pols4,"logdc","week","state","fips","date",tvars,yvars)
+# # sdf <- sdf[,keep]
+# regs <- mainregressions(sdf,
+#                         yvars, plist, bvars, infolist, tvars,
+#                         xlist, ilist, iv, fe=fe, L=L, cluster=cluster, debias = debias, 
+#                         includepbiy=includepbiy,includepiy=includepiy,includepib=includepib
+#                         ) 
+# if (debias) { 
+#     savetextables(NULL, NULL, regs$piy, prefix="cases2") 
+# } else { 
+#     savetextables(NULL, NULL, regs$piy, prefix="cases2-fe") 
+# }
+# source(paste(rootdir,"rmd/generatetables.R",sep="/")) 
+
+```
+
+```{r piy-alt2, eval = FALSE, cache=FALSE, warning=FALSE, results='asis'}
+ 
+# using the growth rate over two weeks without any lages
+
+sdf$const <- 1
+
+# Mask requirement for staffs  
+# infov <- c("logdc", "logdc_L", "logdc_L2")   
+infov <- "const" #c("logdc", "lag(logdc,7)", "lag(logdc,14)")   
+sdf$week <- week(sdf$date) 
+#interactions <-list("as.factor(month)", "as.factor(state)")  
+interactions2 <-list("as.factor(week)", "as.factor(state)")    
+infolist <- list(infov)
+ilist <- list(interactions2)
+xvars <- ""
+xlist <- list(xvars)
+iv <- list("0")
+fe <- list("fips")
+tvars <- "dlogtests" # this is state-level testing variable 
+pols1  <-  c("pmask","pgather50","pshelter","college","school") 
+pols2  <-  c("pmask","pgather50","pshelter","college","school","school_staff_dum")
+pols3  <-  c("pmask","pgather50","pshelter","college","pschoolfull","pschoolhybrid","pschoolremote")  
+pols4  <-  c("pmask","pgather50","pshelter","college","pschoolfull","pschoolhybrid","pschoolremote",
+             "full_staff_dum","hybrid_staff_dum")   
+yvars <- "d2logdc"
+plist <- list(pols1,pols2,pols3,pols4)   
+cluster = "state" 
+debias = FALSE
+
+includepbiy <- FALSE
+includepiy <- TRUE
+includepib <- FALSE     
+includeip <- FALSE
+
+L <- L.c  
+
+### to save memory ###
+remove(df)
+# keep <- c(pols2,pols4,"logdc","week","state","fips","date",tvars,yvars)
+# sdf <- sdf[,keep]
+regs <- mainregressions(sdf,
+                        yvars, plist, bvars, infolist, tvars,
+                        xlist, ilist, iv, fe=fe, L=L, cluster=cluster, debias = debias, 
+                        includepbiy=includepbiy,includepiy=includepiy,includepib=includepib
+                        ) 
+if (debias) { 
+    savetextables(NULL, NULL, regs$piy, prefix="cases-alt2") 
+} else { 
+    savetextables(NULL, NULL, regs$piy, prefix="cases-alt2-fe") 
+}
+  
+ 
+```
+
+
+```{r piy-alt3, eval = FALSE, cache=FALSE, warning=FALSE, results='asis'}
+ 
+# using the growth rate over two weeks without any lagged vars with 21 days lag
+
+sdf$const <- 1
+
+# Mask requirement for staffs  
+# infov <- c("logdc", "logdc_L", "logdc_L2")   
+infov <- "const" #c("logdc", "lag(logdc,7)", "lag(logdc,14)")   
+sdf$week <- week(sdf$date) 
+#interactions <-list("as.factor(month)", "as.factor(state)")  
+interactions2 <-list("as.factor(week)", "as.factor(state)")    
+infolist <- list(infov)
+ilist <- list(interactions2)
+xvars <- ""
+xlist <- list(xvars)
+iv <- list("0")
+fe <- list("fips")
+tvars <- "dlogtests" # this is state-level testing variable 
+pols1  <-  c("pmask","pgather50","pshelter","college","school") 
+pols2  <-  c("pmask","pgather50","pshelter","college","school","school_staff_dum")
+pols3  <-  c("pmask","pgather50","pshelter","college","pschoolfull","pschoolhybrid","pschoolremote")  
+pols4  <-  c("pmask","pgather50","pshelter","college","pschoolfull","pschoolhybrid","pschoolremote",
+             "full_staff_dum","hybrid_staff_dum")   
+yvars <- "d2logdc"
+plist <- list(pols1,pols2,pols3,pols4)    
+cluster = "state" 
+debias = FALSE
+
+includepbiy <- FALSE
+includepiy <- TRUE
+includepib <- FALSE     
+includeip <- FALSE
+
+L <- 21
+
+### to save memory ###
+remove(df)
+# keep <- c(pols2,pols4,"logdc","week","state","fips","date",tvars,yvars)
+# sdf <- sdf[,keep]
+regs <- mainregressions(sdf,
+                        yvars, plist, bvars, infolist, tvars,
+                        xlist, ilist, iv, fe=fe, L=L, cluster=cluster, debias = debias, 
+                        includepbiy=includepbiy,includepiy=includepiy,includepib=includepib
+                        ) 
+if (debias) { 
+    savetextables(NULL, NULL, regs$piy, prefix="cases-alt3") 
+} else { 
+    savetextables(NULL, NULL, regs$piy, prefix="cases-alt3-fe") 
+}
+  
+ 
+```
+ 
+ 
+```{r piy-alt4, eval = FALSE, cache=FALSE, warning=FALSE, results='asis'}
+ 
+sdf$const <- 1
+# Mask requirement for staffs  
+# infov <- c("logdc", "logdc_L", "logdc_L2")   
+infov <- c("const")   
+sdf$week <- week(sdf$date) 
+#interactions <-list("as.factor(month)", "as.factor(state)")  
+interactions2 <-list("as.factor(week)", "as.factor(state)")    
+infolist <- list(infov)
+ilist <- list(interactions2)
+xvars <- ""
+xlist <- list(xvars)
+iv <- list("0")
+fe <- list("fips")
+tvars <- "dlogtests" # this is state-level testing variable 
+pols1  <-  c("pmask","pgather50","pshelter","college","school") 
+pols2  <-  c("pmask","pgather50","pshelter","college","school","school_staff_dum")
+pols3  <-  c("pmask","pgather50","pshelter","college","pschoolfull","pschoolhybrid","pschoolremote")  
+pols4  <-  c("pmask","pgather50","pshelter","college","pschoolfull","pschoolhybrid","pschoolremote",
+             "full_staff_dum","hybrid_staff_dum")   
+yvars <- "logdc"
+plist <- list(pols1,pols2,pols3,pols4)   
+cluster = "state" 
+debias = FALSE
+includepbiy <- FALSE
+includepiy <- TRUE
+includepib <- FALSE     
+includeip <- FALSE
+
+L <- L.c  
+
+### to save memory ###
+remove(df)
+# keep <- c(pols2,pols4,"logdc","week","state","fips","date",tvars,yvars)
+# sdf <- sdf[,keep]
+regs <- mainregressions(sdf,
+                        yvars, plist, bvars, infolist, tvars,
+                        xlist, ilist, iv, fe=fe, L=L, cluster=cluster, debias = debias, 
+                        includepbiy=includepbiy,includepiy=includepiy,includepib=includepib
+                        ) 
+if (debias) { 
+    savetextables(NULL, NULL, regs$piy, prefix="cases-alt4") 
+} else { 
+    savetextables(NULL, NULL, regs$piy, prefix="cases-alt4-fe") 
+}
+  
+
+
+# # Check robustness with respect to s in debiased estimator #
+# source(paste(rootdir,"rmd/generatetables2.R",sep="/"))
+# remove(df)
+# # keep <- c(pols2,pols4,"logdc","week","state","fips","date",tvars,yvars)
+# # sdf <- sdf[,keep]
+# regs <- mainregressions(sdf,
+#                         yvars, plist, bvars, infolist, tvars,
+#                         xlist, ilist, iv, fe=fe, L=L, cluster=cluster, debias = debias, 
+#                         includepbiy=includepbiy,includepiy=includepiy,includepib=includepib
+#                         ) 
+# if (debias) { 
+#     savetextables(NULL, NULL, regs$piy, prefix="cases2") 
+# } else { 
+#     savetextables(NULL, NULL, regs$piy, prefix="cases2-fe") 
+# }
+# source(paste(rootdir,"rmd/generatetables.R",sep="/"))
+
+
+```
+  
+ 
+
+```{r piy-selection, eval = FALSE, cache=FALSE, warning=FALSE, results='asis'}
+ 
+# This chunk checks if the insignificance in college coefficients of column (2) and (4) of Table 1 is due to sample-selection or not.
+# This is in response to R2's comment
+
+# Mask requirement for staffs  
+# infov <- c("logdc", "logdc_L", "logdc_L2")   
+infov <- c("logdc", "lag(logdc,7)", "lag(logdc,14)")   
+sdf$week <- week(sdf$date) 
+#interactions <-list("as.factor(month)", "as.factor(state)")  
+interactions2 <-list("as.factor(week)", "as.factor(state)")    
+infolist <- list(infov)
+ilist <- list(interactions2)
+xvars <- ""
+xlist <- list(xvars)
+iv <- list("0")
+fe <- list("fips")
+tvars <- "dlogtests" # this is state-level testing variable 
+pols1  <-  c("pmask","pgather50","pshelter","college","school") 
+pols2  <-  c("pmask","pgather50","pshelter","college","school","school_staff_dum")
+pols3  <-  c("pmask","pgather50","pshelter","college","pschoolfull","pschoolhybrid","pschoolremote")  
+pols4  <-  c("pmask","pgather50","pshelter","college","pschoolfull","pschoolhybrid","pschoolremote",
+             "full_staff_dum","hybrid_staff_dum")   
+yvars <- "dlogdc"
+plist <- list(pols1,pols2,pols3,pols4)   
+cluster = "state" 
+debias = TRUE
+includepbiy <- FALSE
+includepiy <- TRUE
+includepib <- FALSE     
+includeip <- FALSE
+
+L <- L.c  
+
+# keep the sample where all of variables in pos4 are not NaN
+sdf2 <- sdf
+for (i in 1:length(pols4)){ 
+  sdf2 <- sdf2[!is.na(sdf2[,pols4[i]]),]
+  print(length(unique(sdf2$fips)))
+}
+
+### to save memory ###
+remove(df)
+# keep <- c(pols2,pols4,"logdc","week","state","fips","date",tvars,yvars)
+# sdf <- sdf[,keep]
+plist <- list(pols1,pols2,pols3)   
+regs <- mainregressions(sdf2,
+                        yvars, plist, bvars, infolist, tvars,
+                        xlist, ilist, iv, fe=fe, L=L, cluster=cluster, debias = debias, 
+                        includepbiy=includepbiy,includepiy=includepiy,includepib=includepib
+                        ) 
+if (debias) { 
+    savetextables(NULL, NULL, regs$piy, prefix="cases-selection") 
+} else { 
+    savetextables(NULL, NULL, regs$piy, prefix="cases-selection-fe") 
+}
+   
+
+ 
+
+```
+ 
+ 
+ 
+ 
+```{r pbiy, eval = FALSE, cache=FALSE, warning=FALSE, results='asis'}
+ 
+
+# School Policy Index
+pols1  <-  c("pmask","pgather50","pshelter","college","school") 
+pols2  <-  c("pmask","pgather50","pshelter","college","school","school_staff_dum")
+pols3  <-  c("pmask","pgather50","pshelter","college","pschoolfull","pschoolhybrid","pschoolremote")  
+pols4  <-  c("pmask","pgather50","pshelter","college","pschoolfull","pschoolhybrid","pschoolremote",
+             "full_staff_dum","hybrid_staff_dum")   
+L <- L.c   
+plist <- list(pols1,pols2,pols3,pols4)   
+#infov <- c("logdc", "logdc_L", "logdc_L2")  
+infov <- c("logdc", "lag(logdc,7)", "lag(logdc,14)")  
+sdf$week <- week(sdf$date) 
+#interactions <-list("as.factor(month)", "as.factor(state)")  
+interactions2 <-list("as.factor(week)", "as.factor(state)")    
+infolist <- list(infov)
+ilist <- list(interactions2)
+xlist <- list("")
+iv <- list("0")
+fe <- list("fips")
+tvars <- "dlogtests" # this is state-level testing variable  
+bvars <- c("fullwork","partwork","home")
+cluster ="state"
+debias = TRUE
+includepbiy <- TRUE
+includepiy <- FALSE
+includepib <- FALSE
+includeip <- FALSE   
+
+### to save memory ###
+# remove(df)
+# keep <- c(pols2,pols4,"logdc","week","state","fips","date",tvars,bvars,yvars) 
+# sdf <- sdf[,keep]
+######################
+regs <- mainregressions(sdf,
+                        "dlogdc", plist, bvars, infolist, tvars,
+                        xlist, ilist, iv, fe=fe, L=L, cluster=cluster, debias = debias,                includepbiy=includepbiy,includepiy=includepiy,includepib=includepib
+                        )  
+savetextables(NULL, regs$pbiy, NULL,  prefix="cases") 
+
+  
+L <- L.c   
+#infov <- c("logdc", "logdc_L", "logdc_L2")  
+infov <- c("logdc", "lag(logdc,7)", "lag(logdc,14)")  
+sdf$week <- week(sdf$date) 
+#interactions <-list("as.factor(month)", "as.factor(state)")  
+interactions2 <-list("as.factor(week)", "as.factor(state)")    
+infolist <- list(infov)
+ilist <- list(interactions2)
+xlist <- list("")
+iv <- list("0")
+fe <- list("fips")
+tvars <- "dlogtests" # this is state-level testing variable  
+
+pols1  <-  c("pmask","pgather50","pshelter","college","school") 
+pols3  <-  c("pmask","pgather50","pshelter","college","pschoolfull","pschoolhybrid","pschoolremote")   
+plist <- list(pols1,pols3)   
+yvars <- "dlogdc"
+
+bvars <- c("fullwork","home")
+cluster ="state"
+debias = FALSE
+includepbiy <- FALSE
+includepiy <- FALSE
+includepib <- TRUE
+includeip <- FALSE   
+
+### to save memory ###
+remove(df)
+# vars <- c("college","school","gym","church","bar","restaurant","fullwork","partwork","home")
+# keep <- c(pols3,infov,"week","month","state","fips","date",tvars,yvars,vars) 
+# sdf <- sdf[,keep] 
+regs <- mainregressions(sdf,
+                        yvars, plist, bvars, infolist, tvars,
+                        xlist, ilist, iv, fe=fe, L=L, cluster=cluster, debias = debias, 
+                        includepbiy=includepbiy,includepiy=includepiy,includepib=includepib
+                        ) 
+#savetextables(NULL, NULL, regs$piy, prefix="cases-debiased")
+if (debias) { 
+savetextables(c(regs$pib[[1]][1:4]), NULL, NULL, prefix="behavior-fulltime")
+} else { 
+savetextables(c(regs$pib[[1]][1:4]), NULL, NULL, prefix="behavior-fulltime-fe")
+}
+
+
+L <- L.c   
+# infov <- c("logdc", "logdc_L", "logdc_L2")  
+infov <- c("logdc", "lag(logdc,7)", "lag(logdc,14)")  
+sdf$week <- week(sdf$date) 
+#interactions <-list("as.factor(month)", "as.factor(state)")  
+interactions2 <-list("as.factor(week)", "as.factor(state)")    
+infolist <- list(infov)
+ilist <- list(interactions2)
+xlist <- list("")
+iv <- list("0")
+fe <- list("fips")
+tvars <- "dlogtests" # this is state-level testing variable  
+yvars <- "dlogdc"
+
+pols1  <-  c("pmask","pgather50","pshelter","college","school") 
+pols3  <-  c("pmask","pgather50","pshelter","college","pschoolfull","pschoolhybrid","pschoolremote")   
+plist <- list(pols1,pols3)   
+
+bvars <- c("restaurant","bar")
+cluster ="state"
+debias = FALSE
+includepbiy <- FALSE
+includepiy <- FALSE
+includepib <- TRUE
+includeip <- FALSE   
+ 
+### to save memory ###
+remove(df)
+# vars <- c("college","school","gym","church","bar","restaurant","fullwork","partwork","home")
+# keep <- c(pols3,infov,"week","month","state","fips","date",tvars,yvars,vars) 
+# sdf <- sdf[,keep] 
+regs <- mainregressions(sdf,
+                        yvars, plist, bvars, infolist, tvars,
+                        xlist, ilist, iv, fe=fe, L=L, cluster=cluster, debias = debias, 
+                        includepbiy=includepbiy,includepiy=includepiy,includepib=includepib
+                        ) 
+#savetextables(NULL, NULL, regs$piy, prefix="cases-debiased")
+ 
+if (debias) { 
+savetextables(c(regs$pib[[1]][1:4]), NULL, NULL, prefix="behavior-restaurant")
+} else { 
+savetextables(c(regs$pib[[1]][1:4]), NULL, NULL, prefix="behavior-restaurant-fe") 
+}
+```
+  
+
+## Deaths
+
+
+```{r piy-death, eval = FALSE, cache=FALSE, warning=FALSE, results='asis'}
+ 
+# Mask requirement for staffs
+infov <- c("logdd", "logdd_L", "logdd_L2")
+infov <- c("logdd", "lag(logdd,7)", "lag(logdd,14)")  
+sdf$week <- week(sdf$date) 
+#interactions <-list("as.factor(month)", "as.factor(state)")  
+interactions2 <-list("as.factor(week)", "as.factor(state)")    
+infolist <- list(infov)
+ilist <- list(interactions2)
+xlist <- list("")
+iv <- list("0")
+fe <- list("fips")
+tvars <- ""  
+pols1  <-  c("pmask","pgather50","pshelter","college","school") 
+pols2  <-  c("pmask","pgather50","pshelter","college","school","school_staff_dum")
+pols3  <-  c("pmask","pgather50","pshelter","college","pschoolfull","pschoolhybrid","pschoolremote")  
+pols4  <-  c("pmask","pgather50","pshelter","college","pschoolfull","pschoolhybrid","pschoolremote",
+             "full_staff_dum","hybrid_staff_dum")   
+yvars <- "d3logdd"
+plist <- list(pols1,pols2,pols3,pols4)   
+cluster = "state" 
+debias = TRUE
+includepbiy <- FALSE
+includepiy <- TRUE
+includepib <- FALSE     
+includeip <- FALSE
+L <- L.d 
+
+### to save memory ###
+remove(df)
+# keep <- c(pols2,pols4,"week","state","fips","date",yvars,"logdd","PopulationEstimate2018") 
+# sdf <- sdf[,keep]
+q0 <- quantile(sdf$PopulationEstimate2018,probs=c(0.10),na.rm=TRUE)  
+sdf <- subset(sdf, sdf$PopulationEstimate2018>q0) 
+######################
+
+regs <- mainregressions(sdf,
+                        yvars, plist, bvars, infolist, tvars,
+                        xlist, ilist, iv, fe=fe, L=L, cluster=cluster, debias = debias, 
+                        includepbiy=includepbiy,includepiy=includepiy,includepib=includepib
+                        ) 
+if (debias) { 
+    savetextables(NULL, NULL, regs$piy, prefix=paste("deaths", L, sep=""))
+} else { 
+    savetextables(NULL, NULL, regs$piy, prefix=paste("deaths-fe", L, sep="")) 
+}
+
+
+ 
+ 
+```
+  
+  
+```{r piy-death-fulltime, eval = FALSE, cache=FALSE, warning=FALSE, results='asis'}
+ 
+# Mask requirement for staffs
+infov <- c("logdd", "logdd_L", "logdd_L2")
+infov <- c("logdd", "lag(logdd,7)", "lag(logdd,14)","fullwork","partwork","home")  
+sdf$week <- week(sdf$date) 
+#interactions <-list("as.factor(month)", "as.factor(state)")  
+interactions2 <-list("as.factor(week)", "as.factor(state)")    
+infolist <- list(infov)
+ilist <- list(interactions2)
+xlist <- list("")
+iv <- list("0")
+fe <- list("fips")
+tvars <- ""  
+pols1  <-  c("pmask","pgather50","pshelter","college","school") 
+pols2  <-  c("pmask","pgather50","pshelter","college","school","school_staff_dum")
+pols3  <-  c("pmask","pgather50","pshelter","college","pschoolfull","pschoolhybrid","pschoolremote")  
+pols4  <-  c("pmask","pgather50","pshelter","college","pschoolfull","pschoolhybrid","pschoolremote",
+             "full_staff_dum","hybrid_staff_dum")  
+
+yvars <- "d3logdd"
+plist <- list(pols1,pols2,pols3,pols4)   
+cluster = "state" 
+debias = TRUE
+includepbiy <- FALSE
+includepiy <- TRUE
+includepib <- FALSE     
+includeip <- FALSE
+L <- L.d 
+
+### to save memory ###
+remove(df)
+# keep <- c(pols2,pols4,"week","state","fips","date",yvars,"logdd","PopulationEstimate2018") 
+# sdf <- sdf[,keep]
+q0 <- quantile(sdf$PopulationEstimate2018,probs=c(0.10),na.rm=TRUE)  
+sdf <- subset(sdf, sdf$PopulationEstimate2018>q0) 
+######################
+
+regs <- mainregressions(sdf,
+                        yvars, plist, bvars, infolist, tvars,
+                        xlist, ilist, iv, fe=fe, L=L, cluster=cluster, debias = debias, 
+                        includepbiy=includepbiy,includepiy=includepiy,includepib=includepib
+                        ) 
+if (debias) { 
+    savetextables(NULL, NULL, regs$piy, prefix=paste("deaths-fulltime", L, sep=""))
+} else { 
+    savetextables(NULL, NULL, regs$piy, prefix=paste("deaths-fulltime-fe", L, sep="")) 
+} 
+ 
+ 
+```
+  
+  
+
+```{r piy-death-alt, eval = FALSE, cache=FALSE, warning=FALSE, results='asis'}
+ 
+# Mask requirement for staffs
+infov <- c("logdd", "logdd_L", "logdd_L2")
+infov <- c("logdd", "lag(logdd,7)", "lag(logdd,14)")  
+sdf$week <- week(sdf$date) 
+#interactions <-list("as.factor(month)", "as.factor(state)")  
+interactions2 <-list("as.factor(week)", "as.factor(state)")    
+infolist <- list(infov)
+ilist <- list(interactions2)
+xlist <- list("")
+iv <- list("0")
+fe <- list("fips")
+tvars <- ""  
+pols1  <-  c("pmask","pgather50","pshelter","college","school") 
+pols2  <-  c("pmask","pgather50","pshelter","college","school","school_staff_dum")
+pols3  <-  c("pmask","pgather50","pshelter","college","pschoolfull","pschoolhybrid","pschoolremote")  
+pols4  <-  c("pmask","pgather50","pshelter","college","pschoolfull","pschoolhybrid","pschoolremote",
+             "full_staff_dum","hybrid_staff_dum")   
+yvars <- "d3logdd"
+plist <- list(pols1,pols2,pols3,pols4)   
+cluster = "state" 
+debias = TRUE
+includepbiy <- FALSE
+includepiy <- TRUE
+includepib <- FALSE     
+includeip <- FALSE
+L <- L.d 
+
+### to save memory ###
+remove(df)
+# keep <- c(pols2,pols4,"week","state","fips","date",yvars,"logdd","PopulationEstimate2018") 
+# sdf <- sdf[,keep]
+#q0 <- quantile(sdf$PopulationEstimate2018,probs=c(0.10),na.rm=TRUE)  
+#sdf <- subset(sdf, sdf$PopulationEstimate2018>q0) 
+######################
+
+regs <- mainregressions(sdf,
+                        yvars, plist, bvars, infolist, tvars,
+                        xlist, ilist, iv, fe=fe, L=L, cluster=cluster, debias = debias, 
+                        includepbiy=includepbiy,includepiy=includepiy,includepib=includepib
+                        ) 
+if (debias) { 
+    savetextables(NULL, NULL, regs$piy, prefix=paste("deaths-alt", L, sep=""))
+} else { 
+    savetextables(NULL, NULL, regs$piy, prefix=paste("deaths-alt-fe", L, sep="")) 
+}
+
+
+ 
+ 
+```
+
+
+```{r piy-death-alt-fulltime, eval = FALSE, cache=FALSE, warning=FALSE, results='asis'}
+ 
+# Mask requirement for staffs
+infov <- c("logdd", "logdd_L", "logdd_L2")
+infov <- c("logdd", "lag(logdd,7)", "lag(logdd,14)","fullwork","partwork","home")  
+sdf$week <- week(sdf$date) 
+#interactions <-list("as.factor(month)", "as.factor(state)")  
+interactions2 <-list("as.factor(week)", "as.factor(state)")    
+infolist <- list(infov)
+ilist <- list(interactions2)
+xlist <- list("")
+iv <- list("0")
+fe <- list("fips")
+tvars <- ""  
+pols1  <-  c("pmask","pgather50","pshelter","college","school") 
+pols2  <-  c("pmask","pgather50","pshelter","college","school","school_staff_dum")
+pols3  <-  c("pmask","pgather50","pshelter","college","pschoolfull","pschoolhybrid","pschoolremote")  
+pols4  <-  c("pmask","pgather50","pshelter","college","pschoolfull","pschoolhybrid","pschoolremote",
+             "full_staff_dum","hybrid_staff_dum")  
+
+yvars <- "d3logdd"
+plist <- list(pols1,pols2,pols3,pols4)   
+cluster = "state" 
+debias = TRUE
+includepbiy <- FALSE
+includepiy <- TRUE
+includepib <- FALSE     
+includeip <- FALSE
+L <- L.d 
+
+### to save memory ###
+remove(df)
+# keep <- c(pols2,pols4,"week","state","fips","date",yvars,"logdd","PopulationEstimate2018") 
+# sdf <- sdf[,keep]
+#q0 <- quantile(sdf$PopulationEstimate2018,probs=c(0.10),na.rm=TRUE)  
+#sdf <- subset(sdf, sdf$PopulationEstimate2018>q0) 
+######################
+
+regs <- mainregressions(sdf,
+                        yvars, plist, bvars, infolist, tvars,
+                        xlist, ilist, iv, fe=fe, L=L, cluster=cluster, debias = debias, 
+                        includepbiy=includepbiy,includepiy=includepiy,includepib=includepib
+                        ) 
+if (debias) { 
+    savetextables(NULL, NULL, regs$piy, prefix=paste("deaths-alt-fulltime", L, sep=""))
+} else { 
+    savetextables(NULL, NULL, regs$piy, prefix=paste("deaths-alt-fulltime-fe", L, sep="")) 
+} 
+ 
+ 
+```
+  
+  
+```{r piy-mask, eval = FALSE, cache=FALSE, warning=FALSE, results='asis'}
+ 
+
+# Examing the role of county-wide mask policy and its interaction with school openings
+
+sdf$school_pmask <- sdf$school*sdf$pmask
+sdf$full_pmask <- sdf$pschoolfull*sdf$pmask
+sdf$hybrid_pmask <- sdf$pschoolhybrid*sdf$pmask
+
+# Mask requirement for staffs  
+# infov <- c("logdc", "logdc_L", "logdc_L2")   
+infov <- c("logdc", "lag(logdc,7)", "lag(logdc,14)")   
+sdf$week <- week(sdf$date) 
+#interactions <-list("as.factor(month)", "as.factor(state)")  
+interactions2 <-list("as.factor(week)", "as.factor(state)")    
+infolist <- list(infov)
+ilist <- list(interactions2)
+xvars <- ""
+xlist <- list(xvars)
+iv <- list("0")
+fe <- list("fips")
+tvars <- "dlogtests" # this is state-level testing variable 
+#pols1  <-  c("pmask","pgather50","pshelter","college","school") 
+pols2  <-  c("pmask","pgather50","pshelter","college","school","school_pmask")
+#pols3  <-  c("pmask","pgather50","pshelter","college","pschoolfull","pschoolhybrid","pschoolremote")  
+pols4  <-  c("pmask","pgather50","pshelter","college","pschoolfull","pschoolhybrid","pschoolremote",
+             "full_pmask","hybrid_pmask")   
+yvars <- "dlogdc"
+plist <- list(pols2,pols4)   
+cluster = "state" 
+debias = TRUE
+includepbiy <- FALSE
+includepiy <- TRUE
+includepib <- FALSE     
+includeip <- FALSE
+
+L <- L.c  
+
+### to save memory ###
+remove(df)
+# keep <- c(pols2,pols4,"logdc","week","state","fips","date",tvars,yvars)
+# sdf <- sdf[,keep]
+regs <- mainregressions(sdf,
+                        yvars, plist, bvars, infolist, tvars,
+                        xlist, ilist, iv, fe=fe, L=L, cluster=cluster, debias = debias, 
+                        includepbiy=includepbiy,includepiy=includepiy,includepib=includepib
+                        ) 
+if (debias) { 
+    savetextables(NULL, NULL, regs$piy, prefix="cases-mask") 
+} else { 
+    savetextables(NULL, NULL, regs$piy, prefix="cases-mask-fe") 
+}
+  
+
+ 
+
+```
+  
+# Plots of evolution of various variables
+ 
+```{r plots, eval = FALSE}
+ 
+
+sdf <- subset(df, df$date<=as.Date("2020-12-15"))  
+ 
+library(ggthemes)
+library(ggplot2)
+library(gridExtra)
+library(knitr)
+library(kableExtra)
+library(latex2exp)
+library(plm)
+library(lubridate)
+plottheme <- theme_pander() + theme(plot.title=element_text(face="plain"))
+colors <-  scale_color_solarized
+#quantileplot <- function(v, p=c(0.05, 0.25, 0.5, 0.75, 0.95), data=df) {
+quantileplot <- function(v, p=c(0.05,0.25, 0.5, 0.75, 0.95), data=sdf) {
+  data$y <- data[,v]
+  adf <- aggregate(y ~ date, data=data,
+                   FUN=function(x) quantile(x, probs=p, na.rm=TRUE))
+  q <- quantile(data$y, probs=c(0.005,0.995), na.rm=TRUE)
+  p <- as.factor(p)
+  s <- 1.2
+  txt <- data.frame(date=max(adf$date), y=adf$y[nrow(adf$y),], p=p)
+  names(adf)[1] <- "date"
+  figm <- ggplot(adf) +
+    geom_line(aes(x=date, y=adf$y[,1], color=p[1]), size=s) +
+    geom_line(aes(x=date, y=adf$y[,2], color=p[2]), size=s) +
+    geom_line(aes(x=date, y=adf$y[,3], color=p[3]), size=s) +
+    geom_line(aes(x=date, y=adf$y[,4], color=p[4]), size=s) +
+    geom_line(aes(x=date, y=adf$y[,5], color=p[5]), size=s) +
+    geom_text(data=txt,aes(x=date,y=y,color=p, label=p,
+                           hjust="left",vjust="center", size=2)) +
+    ylab("Visits / Device") +  xlab("Date") +
+    ylim(c(q[1],q[2])) +
+    plottheme +
+    colors() + ggtitle(TeX(paste("Evolution of",
+                             varlabels[varlabels$Variable==v,"Label"]))) +
+   #geom_line(data=data, aes(x=date, y=y, group=fips), alpha=0.002) +
+    theme(legend.position="none")  +
+    scale_x_date(limits = as.Date(c("2020-02-15","2020-12-20")))      
+
+}
+
+vars  <- c("college","school","restaurant","bar","gym","church","assistedliving","nursing")
+figm <- lapply(vars, quantileplot)
+
+# for (i in seq(1,length(figm),by=2)) {
+#   grid.arrange(grobs=figm[i:(i+1)], nrow=2)
+# }
+for (i in 1:length(figm)) {
+  vl <- vars[[i]]
+  pdf(sprintf("%s/tex/tables_and_figures/sg-%s.pdf",rootdir,vl), width=7, height=3.5)
+  if (i==1){
+    figm[[i]] <- figm[[i]] + ylim(c(0,0.4))
+  }
+  print(figm[[i]])
+  dev.off()
+}
+ 
+
+
+
+sdf2 <- subset(df, df$college_visits>0&df$date==as.Date("2020-03-01")) 
+ncollege <- sum(!is.na(sdf2$college)) 
+#   nschool <- sum(!is.na(sdf2$school))  
+#   ncollege <- sum(!is.na(sdf2$college)) 
+
+
+fig <- quantileplot("college",data=subset(df,df$college_visits>5))
+pdf(sprintf("%s/tex/tables_and_figures/sg-college-positive.pdf",rootdir), width=7, height=3.5)
+print(fig)
+dev.off()
+
+ 
+quantileplot <- function(v, p=c(0.05,0.25, 0.5, 0.75, 0.95), data=sdf) {
+  data$y <- data[,v]
+  adf <- aggregate(y ~ date, data=data,
+                   FUN=function(x) quantile(x, probs=p, na.rm=TRUE))
+  q <- quantile(data$y, probs=c(0.005,0.995), na.rm=TRUE)
+  p <- as.factor(p)
+  s <- 1.2
+  txt <- data.frame(date=max(adf$date), y=adf$y[nrow(adf$y),], p=p)
+  names(adf)[1] <- "date"
+  figm <- ggplot(adf) +
+    geom_line(aes(x=date, y=adf$y[,1], color=p[1]), size=s) +
+    geom_line(aes(x=date, y=adf$y[,2], color=p[2]), size=s) +
+    geom_line(aes(x=date, y=adf$y[,3], color=p[3]), size=s) +
+    geom_line(aes(x=date, y=adf$y[,4], color=p[4]), size=s) +
+    geom_line(aes(x=date, y=adf$y[,5], color=p[5]), size=s) + 
+    geom_text(data=txt,aes(x=date,y=y,color=p, label=p,
+                           hjust="left",vjust="center", size=2)) +
+    ylab("Visits / Device") +  xlab("Date") +
+    ylim(q) +
+    plottheme +
+    colors() + ggtitle(TeX(paste("Evolution of",
+                             varlabels[varlabels$Variable==v,"Label"]))) +
+    #geom_line(data=data, aes(x=date, y=y, group=fips), alpha=0.002) +
+    theme(legend.position="none") +
+    scale_x_date(limits = as.Date(c("2020-03-20","2020-12-20")),date_breaks = "months" , date_labels = "%b")
+}
+
+vars  <- c("dlogdc","dlogdd")
+figm <- lapply(vars, quantileplot)
+for (i in 1:length(figm)) {
+  vl <- vars[[i]]
+  figm[[i]] <- figm[[i]] + ylab("Weekly Growth Rates")  
+  pdf(sprintf("%s/tex/tables_and_figures/nyt-%s.pdf",rootdir,vl), width=7, height=3.5)
+  print(figm[[i]])
+  dev.off()
+} 
+
+vars  <- c("dlogdc2","dlogdd2")
+figm <- lapply(vars, quantileplot)
+for (i in 1:length(figm)) {
+  vl <- vars[[i]]
+  figm[[i]] <- figm[[i]] + ylab("Weekly Growth Rates")  
+  pdf(sprintf("%s/tex/tables_and_figures/nyt-%s-2w.pdf",rootdir,vl), width=7, height=3.5)
+  print(figm[[i]])
+  dev.off()
+} 
+
+
+
+q <- quantile(sdf$PopulationEstimate2018,probs=c(0.5),na.rm=TRUE)
+sdf2 <- subset(sdf, sdf$PopulationEstimate2018>q)  
+quantileplot2 <- function(v, p=c(0.05,0.25, 0.5, 0.75, 0.95), data=sdf2) {
+  data$y <- data[,v]
+  adf <- aggregate(y ~ date, data=data,
+                   FUN=function(x) quantile(x, probs=p, na.rm=TRUE))
+  q <- quantile(data$y, probs=c(0.005,0.995), na.rm=TRUE)
+  p <- as.factor(p)
+  s <- 1.2
+  txt <- data.frame(date=max(adf$date), y=adf$y[nrow(adf$y),], p=p)
+  names(adf)[1] <- "date"
+  figm <- ggplot(adf) +
+    geom_line(aes(x=date, y=adf$y[,1], color=p[1]), size=s) +
+    geom_line(aes(x=date, y=adf$y[,2], color=p[2]), size=s) +
+    geom_line(aes(x=date, y=adf$y[,3], color=p[3]), size=s) +
+    geom_line(aes(x=date, y=adf$y[,4], color=p[4]), size=s) +
+    geom_line(aes(x=date, y=adf$y[,5], color=p[5]), size=s) + 
+    geom_text(data=txt,aes(x=date,y=y,color=p, label=p,
+                           hjust="left",vjust="center", size=2)) +
+    ylab("Visits / Device") +  xlab("Date") +
+    ylim(q) +
+    plottheme +
+    colors() + ggtitle(TeX(paste("Evolution of",
+                             varlabels[varlabels$Variable==v,"Label"]))) +
+    #geom_line(data=data, aes(x=date, y=y, group=fips), alpha=0.002) +
+    theme(legend.position="none") +
+    scale_x_date(limits = as.Date(c("2020-03-20","2020-12-20")),date_breaks = "months" , date_labels = "%b")
+}
+      
+vars  <- c("dlogdc","dlogdd") 
+figm <- lapply(vars, quantileplot2)
+for (i in 1:length(figm)) {
+  vl <- vars[[i]]
+  figm[[i]] <- figm[[i]] + ylab("Weekly Growth Rates")  
+  pdf(sprintf("%s/tex/tables_and_figures/nyt-%s-q1.pdf",rootdir,vl), width=7, height=3.5)
+  print(figm[[i]])
+  dev.off()
+} 
+
+
+ 
+  
+vars  <- c("dcase_capita","ddeath_capita")
+figm <- lapply(vars, quantileplot)
+for (i in 1:length(figm)) {
+  vl <- vars[[i]]
+  if (i==1) { 
+    figm[[i]] <- figm[[i]] + ylab("Weekly Cases Per 1000") 
+  } else {
+    figm[[i]] <- figm[[i]] + ylab("Weekly Deaths Per 1000") 
+  }
+  pdf(sprintf("%s/tex/tables_and_figures/nyt-%s.pdf",rootdir,vl), width=7, height=3.5)
+  print(figm[[i]])
+  dev.off()
+}
+
+
+figm <- lapply(vars, quantileplot2)
+for (i in 1:length(figm)) {
+  vl <- vars[[i]]
+  if (i==1) { 
+    figm[[i]] <- figm[[i]] + ylab("Weekly Cases Per 1000") 
+  } else {
+    figm[[i]] <- figm[[i]] + ylab("Weekly Deaths Per 1000") 
+  }
+  pdf(sprintf("%s/tex/tables_and_figures/nyt-%s-q1.pdf",rootdir,vl), width=7, height=3.5)
+  print(figm[[i]])
+  dev.off()
+}
+ 
+ 
+
+```
+
+
+# Dot-and-Whisker plots: bias correction and sensitivity check
+```{r regsfe,  eval = FALSE, cache=FALSE, warning=FALSE, results='asis'}
+
+# This will use the same program as in the main table from generatetables.R
+
+####### Case Growth with K-12 Visits ######## 
+# using school policy index and cases
+infov <- c("logdc", "lag(logdc,7)", "lag(logdc,14)") 
+sdf$week <- week(sdf$date)  
+infolist <- list(infov) 
+xlist <- list("")
+iv <- list("0")
+fe <- "fips"
+cluster <- "state"
+tvars <- "dlogtests" # this is state-level testing variable 
+yvar <- "dlogdc"
+bv <- NULL 
+L <- L.c
+interact <-list("as.factor(week)", "as.factor(state)")  
+x <- c(sprintf("lag(%s, %d)", infov, L), tvars)     
+                
+cl <- "state"
+np <- 8  
+remove(df)
+# p <- c("pmask","pgather50","pshelter","college","school","school_staff_dum","restaurant","bar",
+#        "gym","church","fullwork","partwork","home","case_capita")
+# keep <- c(p,"logdc","dlogdc","logdc2","dlogdc2","week","month","state","fips","date","PopulationEstimate2018") 
+# sdf <- sdf[,keep]
+f <- function(i) {
+  p <- c("pmask","pgather50","pshelter","college","school")  
+  x <-  c(sprintf("lag(%s, %d)", infov, L), tvars) 
+  L <- L.c  
+  if (i==2) { # alternative time lag
+    L <- 10
+    #x <-  c(sprintf("lag(%s, %d)", infov, L), tvars)  
+  } else if (i==3) {  # alternative time lag
+    L <- 18
+    #x <-  c(sprintf("lag(%s, %d)", infov, L), tvars)  
+  } else if (i==4) {  # alternative measure of case growth
+    yvar <- "dlogdc2" 
+    infov <- c("logdc", "lag(logdc,7)", "lag(logdc,14)") 
+    x <-  c(sprintf("lag(%s, %d)", infov, L), tvars)   
+  } else if (i==5){  # adding more lagged cases
+    infov <- c("logdc", "lag(logdc,7)", "lag(logdc,14)", "lag(logdc,21)")  
+    x <-  c(sprintf("lag(%s, %d)", infov, L),"case_capita", tvars)    
+  } else if (i==6) {  # adding behavior vars
+    p <- c(p,"restaurant","bar","gym","church") 
+    x <- c(x,"lag(restaurant,28)","lag(bar,28)","lag(gym,28)","lag(church,28)") 
+  } else if (i==7) {    
+    p <- c(p,"fullwork","partwork","home")  
+  } else if (i==8) {   # (6)-(8)  
+    p <- c(p,"restaurant","bar","gym","church","fullwork","partwork","home")  
+    infov <- c("logdc", "lag(logdc,7)", "lag(logdc,14)", "lag(logdc,21)")  
+    x <-  c(sprintf("lag(%s, %d)", infov, L),"case_capita", tvars)    
+    x <- c(x,"lag(restaurant,28)","lag(bar,28)","lag(gym,28)","lag(church,28)")  
+  } 
+  m <-  reg_bc(sdf, yvar, p, bv, x, interact, iv, L, fe, cluster = cl, multiple = FALSE)   
+  res <- cbind(m$reg$beta[1:10],m$bc[1:10],m$reg$cse[1:10]) 
+  return(res)
+} 
+piy <- mclapply(1:np, f, mc.cores = np)  
+  
+dwfig <- function(ij,k,y,debias=TRUE) {
+  np <- length(y)
+  coef <- se <- matrix(, nrow = 10, ncol = np)   
+  if (debias) {
+    j <- 2
+  } else {
+    j <- 1
+  }
+  for (i in 1:np) {  
+      coef[,i] <- c(y[[i]][,j])  
+      se[,i] <- y[[i]][,3]
+  }  　 
+  nv <- length(k)
+  nij <- length(ij)
+  results_df <- data.frame(term = rep(var.names,times = np),
+                         estimate = c(coef[k,ij]),
+                         std.error = c(se[k,ij]), 
+                         model = c(rep("(1) Baseline",nv),  rep("(2) Lag = 10",nv),rep("(3) Lag = 18",nv),  
+                                   rep("(4) Alt. Case Growth",nv),  
+                                   rep("(5) Past Cases",nv), rep("(6) Bars etc.",nv), 
+                                   rep("(7) Fulltime + Home",nv),  rep("(8) All of (5)-(7)",nv)), 
+                         stringsAsFactors = FALSE) 
+  fig <- dwplot(results_df, conf.level = .90, dot_args = list(size = 4, pch = 1), whisker_args = list(size=1)) + theme_bw() +
+      theme(       legend.justification=c(.01, .999), legend.position=c(.01, .99),
+             legend.title = element_blank(), legend.background =
+                element_rect(color="gray90")) +
+      geom_vline(xintercept = 0, colour = "grey60", linetype = 2) +
+    theme(text=element_text(family="Times New Roman", face="bold", size=10)) +
+    # xlim(-0.25, 0.85) +
+    theme(
+    legend.title = element_text(size = 8),
+    legend.text = element_text(size = 8)
+    )   
+  return(fig) 
+}  
+
+# school and college visits
+var.names <- c("College\nVisits","School\nVisits") 
+k <- c(4,5)
+ij <- c(1:np) 
+nv <- length(var.names)
+fig <- dwfig(ij,k,piy,debias = FALSE) + xlab("Estimated Coefficients") + xlim(-0.25, 1.0) + theme(legend.justification=c(.01, .999), legend.position=c(.62, .99), legend.title = element_text(size=12, face='bold'), legend.text = element_text(size = 12), legend.background = element_rect(color="gray90"), axis.text.x = element_text(size = 12), axis.text.y = element_text(size = 12) ) 
+p <- "school-college" 
+figdev(sprintf("%s/tex/tables_and_figures/%s-whisker-cases.pdf", rootdir, p), width=8, height=6) 
+print(fig)
+dev.off()
+fig 
+fig <- dwfig(ij,k,piy,debias = TRUE) + xlab("Estimated Coefficients") + xlim(-0.15, 1.2) + theme(legend.justification=c(.01, .999), legend.position=c(.62, .99), legend.title = element_text(size=12, face='bold'), legend.text = element_text(size = 12), legend.background = element_rect(color="gray90"), axis.text.x = element_text(size = 12), axis.text.y = element_text(size = 12) )
+p <- "school-college-bc"
+figdev(sprintf("%s/tex/tables_and_figures/%s-whisker-cases.pdf", rootdir, p), width=8, height=6)
+print(fig)
+dev.off()
+fig
+
+######  Case witn Staff Mask Requirement ###### 
+# using school policy index and cases
+infov <- c("logdc", "lag(logdc,7)", "lag(logdc,14)") 
+sdf$week <- week(sdf$date)  
+infolist <- list(infov) 
+xlist <- list("")
+iv <- list("0")
+fe <- "fips"
+tvars <- "dlogtests" # this is state-level testing variable 
+yvar <- "dlogdc"
+bv <- NULL 
+L <- L.c
+interact <-list("as.factor(week)", "as.factor(state)")  
+x <- c(sprintf("lag(%s, %d)", infov, L), tvars)    
+cl <- "state" 
+np <- 8  
+q0 <- quantile(sdf$PopulationEstimate2018,probs=c(0.10),na.rm=TRUE)  
+### to save memory ###
+remove(df)
+# p <- c("pmask","pgather50","pshelter","college","school","school_staff_dum","restaurant","bar",
+#        "gym","church","fullwork","partwork","home","case_capita")
+# keep <- c(p,"logdc","dlogdc","logdc2","dlogdc2","week","month","state","fips","date","PopulationEstimate2018") 
+# sdf <- sdf[,keep]  
+f <- function(i) {
+    p <- c("pmask","pgather50","pshelter","college","school","school_staff_dum")  
+  x <-  c(sprintf("lag(%s, %d)", infov, L), tvars) 
+  L <- L.c  
+  if (i==2) { # alternative time lag
+    L <- 10
+    #x <-  c(sprintf("lag(%s, %d)", infov, L), tvars)  
+  } else if (i==3) {  # alternative time lag
+    L <- 18
+    #x <-  c(sprintf("lag(%s, %d)", infov, L), tvars)  
+  } else if (i==4) {  # alternative measure of case growth
+    yvar <- "dlogdc2" 
+    infov <- c("logdc", "lag(logdc,7)", "lag(logdc,14)") 
+    x <-  c(sprintf("lag(%s, %d)", infov, L), tvars)   
+  } else if (i==5){  # adding more lagged cases
+    infov <- c("logdc", "lag(logdc,7)", "lag(logdc,14)", "lag(logdc,21)")  
+    x <-  c(sprintf("lag(%s, %d)", infov, L),"case_capita", tvars)    
+  } else if (i==6) {  # adding behavior vars
+    p <- c(p,"restaurant","bar","gym","church") 
+    x <- c(x,"lag(restaurant,28)","lag(bar,28)","lag(gym,28)","lag(church,28)") 
+  } else if (i==7) {    
+    p <- c(p,"fullwork","partwork","home")  
+  } else if (i==8) {   # (6)-(8)  
+    p <- c(p,"restaurant","bar","gym","church","fullwork","partwork","home")  
+    infov <- c("logdc", "lag(logdc,7)", "lag(logdc,14)", "lag(logdc,21)")  
+    x <-  c(sprintf("lag(%s, %d)", infov, L),"case_capita", tvars)    
+    x <- c(x,"lag(restaurant,28)","lag(bar,28)","lag(gym,28)","lag(church,28)")  
+  } 
+  m <-  reg_bc(sdf, yvar, p, bv, x, interact, iv, L, fe, cluster = cl, multiple = FALSE)  
+  res <- cbind(m$reg$beta[1:10],m$bc[1:10],m$reg$cse[1:10]) 
+  return(res)
+} 
+piy2 <- mclapply(1:np, f, mc.cores = np)  
+
+dwfig <- function(ij,k,y,debias=TRUE) {
+  np <- length(y)
+  coef <- se <- matrix(, nrow = 10, ncol = np)   
+  if (debias) {
+    j <- 2
+  } else {
+    j <- 1
+  }
+  for (i in 1:np) {  
+      coef[,i] <- c(y[[i]][,j])  
+      se[,i] <- y[[i]][,3]
+  }  　 
+  nv <- length(k)
+  nij <- length(ij)
+  results_df <- data.frame(term = rep(var.names,times = np),
+                         estimate = c(coef[k,ij]),
+                         std.error = c(se[k,ij]), 
+                         model = c(rep("(1) Baseline",nv),  rep("(2) Lag = 10",nv),rep("(3) Lag = 18",nv),  
+                                   rep("(4) Alt. Case Growth",nv),   
+                                   rep("(5) Past Cases",nv), rep("(6) Bars etc.",nv), 
+                                   rep("(7) Fulltime + Home",nv),  rep("(8) All of (5)-(7)",nv)), 
+                         stringsAsFactors = FALSE) 
+  fig <- dwplot(results_df, conf.level = .90, dot_args = list(size = 4, pch = 1), whisker_args = list(size=1)) + theme_bw() +
+      theme(       legend.justification=c(.01, .999), legend.position=c(.01, .99),
+             legend.title = element_blank(), legend.background =
+                element_rect(color="gray90")) +
+      geom_vline(xintercept = 0, colour = "grey60", linetype = 2) +
+    theme(text=element_text(family="Times New Roman", face="bold", size=10)) +
+    # xlim(-0.25, 0.85) +
+    theme(
+    legend.title = element_text(size = 8),
+    legend.text = element_text(size = 8)
+    )   
+  return(fig)
+}  
+
+# school and college visits
+var.names <- c("College\nVisits","School\nVisits","School\nVisits\nx No-Mask") 
+k <- c(4,5,6)
+ij <- c(1:np) 
+nv <- length(var.names)
+fig <- dwfig(ij,k,piy2,debias = FALSE) + xlab("Estimated Coefficients") + xlim(-0.25, 1.0) + theme(legend.justification=c(.01, .999), legend.position=c(.62, .99), legend.title = element_text(size=12, face='bold'), legend.text = element_text(size = 12), legend.background = element_rect(color="gray90"), axis.text.x = element_text(size = 12), axis.text.y = element_text(size = 12) ) 
+p <- "school-college" 
+figdev(sprintf("%s/tex/tables_and_figures/%s-whisker-cases-hetero.pdf", rootdir, p), width=8, height=6) 
+print(fig)
+dev.off()
+fig 
+fig <- dwfig(ij,k,piy2,debias = TRUE) + xlab("Estimated Coefficients") + xlim(-0.15, 1.2) + theme(legend.justification=c(.01, .999), legend.position=c(.62, .99), legend.title = element_text(size=12, face='bold'), legend.text = element_text(size = 12), legend.background = element_rect(color="gray90"), axis.text.x = element_text(size = 12), axis.text.y = element_text(size = 12) )
+p <- "school-college-bc"
+figdev(sprintf("%s/tex/tables_and_figures/%s-whisker-cases-hetero.pdf", rootdir, p), width=8, height=6)
+print(fig)
+dev.off()
+fig
+
+
+
+
+####### Death Growth ###### 
+infov <- c("logdd", "lag(logdd,7)", "lag(logdd,14)") 
+sdf$week <- week(sdf$date)  
+infolist <- list(infov) 
+xlist <- list("")
+iv <- list("0")
+fe <- "fips"
+cluster <- "state"
+tvars <- ""    
+yvar <- "d3logdd"
+bv <- NULL 
+L <- L.d 
+interact <-list("as.factor(week)", "as.factor(state)") 
+#interact <-list("as.factor(month)", "as.factor(state)")   # for fast code checking   
+
+                
+cl <- "state"
+np <- 8  
+remove(df)
+# p <- c("pmask","pgather50","pshelter","college","school","school_staff_dum","restaurant","bar",
+#        "gym","church","fullwork","partwork","home","case_capita")
+# keep <- c(p,"logdd","d2logdd","d3logdd","d3logdd2","dlogdd","week","month","state","fips","date","PopulationEstimate2018")
+# sdf <- sdf[,keep]
+q0 <- quantile(sdf$PopulationEstimate2018,probs=c(0.10),na.rm=TRUE)  
+#q0 <- quantile(sdf$PopulationEstimate2018,probs=c(0.90),na.rm=TRUE)   # for fast code checking   
+sdf <- subset(sdf, sdf$PopulationEstimate2018>q0) 
+f <- function(i) {
+  p <- c("pmask","pgather50","pshelter","college","school")  
+  x <-  c(sprintf("lag(%s, %d)", infov, L)) 
+  L <- L.d  
+  if (i==2) {  # alternative time lag
+    L <- 42
+    x <-  c(sprintf("lag(%s, %d)", infov, L))
+  } else if (i==3) {  # alternative time lag
+    L <- 49
+    x <-  c(sprintf("lag(%s, %d)", infov, L))
+  } else if (i==4) {  # alternative measure of case growth
+    yvar <- "d3logdd2" 
+    infov <- c("logdd", "lag(logdd,7)", "lag(logdd,14)") 
+    x <-  c(sprintf("lag(%s, %d)", infov, L))   
+  } else if (i==5){  # adding more lagged cases 
+    infov <- c("logdd", "lag(logdd,7)", "lag(logdd,14)", "lag(logdd,21)")  
+    x <-  c(sprintf("lag(%s, %d)", infov, L),"death_capita")    
+  } else if (i==6) {  # adding behavior vars
+    p <- c(p,"restaurant","bar","gym","church") 
+    x <- c(x,"lag(restaurant,49)","lag(bar,49)","lag(gym,49)","lag(church,49)") 
+  } else if (i==7) {    
+    p <- c(p,"fullwork","partwork","home")  
+  } else if (i==8) {   # (6)-(8)  
+    p <- c(p,"restaurant","bar","gym","church","fullwork","partwork","home")  
+    infov <- c("logdd", "lag(logdd,7)", "lag(logdd,14)", "lag(logdd,21)")  
+    x <-  c(sprintf("lag(%s, %d)", infov, L),"death_capita")    
+    x <- c(x,"lag(restaurant,49)","lag(bar,49)","lag(gym,49)","lag(church,49)")  
+  } 
+  m <-  reg_bc(sdf, yvar, p, bv, x, interact, iv, L, fe, cluster = cl, multiple = FALSE)   
+  res <- cbind(m$reg$beta[1:10],m$bc[1:10],m$reg$cse[1:10]) 
+  return(res)
+} 
+piy_d <- mclapply(1:np, f, mc.cores = np)  
+ 
+   
+dwfig_d <- function(ij,k,y,debias=TRUE) {
+  np <- length(y)
+  coef <- se <- matrix(, nrow = 10, ncol = np)   
+  if (debias) {
+    j <- 2
+  } else {
+    j <- 1
+  }
+  for (i in 1:np) {  
+      coef[,i] <- c(y[[i]][,j])  
+      se[,i] <- y[[i]][,3]
+  }  　 
+  nv <- length(k)
+  nij <- length(ij)
+  results_df <- data.frame(term = rep(var.names,times = np),
+                         estimate = c(coef[k,ij]),
+                         std.error = c(se[k,ij]), 
+                         model = c(rep("(1) Baseline",nv),  rep("(2) Lag = 42",nv),rep("(3) Lag = 49",nv),  
+                                   rep("(4) Alt. Death Growth",nv),  
+                                   rep("(5) Past Deaths",nv), rep("(6) Bars etc.",nv), 
+                                   rep("(7) Fulltime + Home",nv),  rep("(8) All of (5)-(7)",nv)), 
+                         stringsAsFactors = FALSE) 
+  fig <- dwplot(results_df, conf.level = .90, dot_args = list(size = 4, pch = 1), whisker_args = list(size=1)) + theme_bw() +
+      theme(       legend.justification=c(.01, .999), legend.position=c(.01, .99),
+             legend.title = element_blank(), legend.background =
+                element_rect(color="gray90")) +
+      geom_vline(xintercept = 0, colour = "grey60", linetype = 2) +
+    theme(text=element_text(family="Times New Roman", face="bold", size=10)) +
+    # xlim(-0.25, 0.85) +
+    theme(
+    legend.title = element_text(size = 8),
+    legend.text = element_text(size = 8)
+    )   
+  return(fig) 
+}  
+
+# school and college visits
+var.names <- c("College\nVisits","School\nVisits") 
+k <- c(4,5)
+ij <- c(1:np) 
+nv <- length(var.names)
+fig <- dwfig_d(ij,k,piy_d,debias = FALSE) + xlab("Estimated Coefficients") + xlim(-0.3, 1.0) + theme(legend.justification=c(.01, .999), legend.position=c(.68, .99), legend.title = element_text(size=12, face='bold'), legend.text = element_text(size = 12), legend.background = element_rect(color="gray90"), axis.text.x = element_text(size = 12), axis.text.y = element_text(size = 12) ) 
+p <- "school-college" 
+figdev(sprintf("%s/tex/tables_and_figures/%s-whisker-death%s.pdf", rootdir, p, L), width=8, height=6) 
+print(fig)
+dev.off()
+fig 
+fig <- dwfig_d(ij,k,piy_d,debias = TRUE) + xlab("Estimated Coefficients") + xlim(-0.6, 1.8) + theme(legend.justification=c(.01, .999), legend.position=c(.68, .99), legend.title = element_text(size=12, face='bold'), legend.text = element_text(size = 12), legend.background = element_rect(color="gray90"), axis.text.x = element_text(size = 12), axis.text.y = element_text(size = 12) )
+p <- "school-college-bc"
+figdev(sprintf("%s/tex/tables_and_figures/%s-whisker-death%s.pdf", rootdir, p, L), width=8, height=6)
+print(fig)
+dev.off()
+fig 
+
+########  Death witn Staff Mask Requirement ########## 
+infov <- c("logdd", "lag(logdd,7)", "lag(logdd,14)") 
+sdf$week <- week(sdf$date)  
+infolist <- list(infov) 
+xlist <- list("")
+iv <- list("0")
+fe <- "fips"
+cluster <- "state"
+tvars <- ""   
+yvar <- "d3logdd"
+bv <- NULL 
+L <- L.d <- 35  
+interact <-list("as.factor(week)", "as.factor(state)")  
+x <- c(sprintf("lag(%s, %d)", infov, L), tvars)    
+ 
+cl <- "state"
+np <- 8  
+remove(df)
+# p <- c("pmask","pgather50","pshelter","college","school","school_staff_dum","restaurant","bar",
+#        "gym","church","fullwork","partwork","home","case_capita")
+# keep <- c(p,"logdd","dlogdd","logdd2","dlogdd2","week","month","state","fips","date","PopulationEstimate2018") 
+# sdf <- sdf[,keep]
+q0 <- quantile(sdf$PopulationEstimate2018,probs=c(0.10),na.rm=TRUE)  
+sdf <- subset(sdf, sdf$PopulationEstimate2018>q0) 
+f <- function(i) {
+  p <- c("pmask","pgather50","pshelter","college","school","school_staff_dum")  
+  x <-  c(sprintf("lag(%s, %d)", infov, L)) 
+  L <- L.d  
+  if (i==2) {  # alternative time lag
+    L <- 42
+    x <-  c(sprintf("lag(%s, %d)", infov, L))
+  } else if (i==3) { # alternative time lag
+    L <- 49
+    x <-  c(sprintf("lag(%s, %d)", infov, L))
+  } else if (i==4) {  # alternative measure of case growth
+    yvar <- "d3logdd2" 
+    infov <- c("logdd", "lag(logdd,7)", "lag(logdd,14)") 
+    x <-  c(sprintf("lag(%s, %d)", infov, L))   
+  } else if (i==5){  # adding more lagged cases
+    infov <- c("logdd", "lag(logdd,7)", "lag(logdd,14)", "lag(logdd,21)")  
+    x <-  c(sprintf("lag(%s, %d)", infov, L),"death_capita")    
+  } else if (i==6) {  # adding behavior vars
+    p <- c(p,"restaurant","bar","gym","church") 
+    x <- c(x,"lag(restaurant,49)","lag(bar,49)","lag(gym,49)","lag(church,49)") 
+  } else if (i==7) {    
+    p <- c(p,"fullwork","partwork","home")  
+  } else if (i==8) {   # (6)-(8)  
+    p <- c(p,"restaurant","bar","gym","church","fullwork","partwork","home")  
+    infov <- c("logdd", "lag(logdd,7)", "lag(logdd,14)", "lag(logdd,21)")  
+    x <-  c(sprintf("lag(%s, %d)", infov, L),"death_capita")    
+    x <- c(x,"lag(restaurant,49)","lag(bar,49)","lag(gym,49)","lag(church,49)")  
+  } 
+  m <-  reg_bc(sdf, yvar, p, bv, x, interact, iv, L, fe, cluster = cl, multiple = FALSE)   
+  res <- cbind(m$reg$beta[1:10],m$bc[1:10],m$reg$cse[1:10]) 
+  return(res)
+} 
+piy_d2 <- mclapply(1:np, f, mc.cores = np)  
+  
+dwfig_d2 <- function(ij,k,y,debias=TRUE) {
+  np <- length(y)
+  coef <- se <- matrix(, nrow = 10, ncol = np)   
+  if (debias) {
+    j <- 2
+  } else {
+    j <- 1
+  }
+  for (i in 1:np) {  
+      coef[,i] <- c(y[[i]][,j])  
+      se[,i] <- y[[i]][,3]
+  }  　 
+  nv <- length(k)
+  nij <- length(ij)
+  results_df <- data.frame(term = rep(var.names,times = np),
+                         estimate = c(coef[k,ij]),
+                         std.error = c(se[k,ij]), 
+                         model = c(rep("(1) Baseline",nv),  rep("(2) Lag = 42",nv),rep("(3) Lag = 49",nv),  
+                                   rep("(4) Alt. Death Growth",nv),  
+                                   rep("(5) Past Deaths",nv), rep("(6) Bars etc.",nv), 
+                                   rep("(7) Fulltime + Home",nv),  rep("(8) All of (5)-(7)",nv)), 
+                         stringsAsFactors = FALSE) 
+  fig <- dwplot(results_df, conf.level = .90, dot_args = list(size = 4, pch = 1), whisker_args = list(size=1)) + theme_bw() +
+      theme(       legend.justification=c(.01, .999), legend.position=c(.01, .99),
+             legend.title = element_blank(), legend.background =
+                element_rect(color="gray90")) +
+      geom_vline(xintercept = 0, colour = "grey60", linetype = 2) +
+    theme(text=element_text(family="Times New Roman", face="bold", size=10)) +
+    # xlim(-0.25, 0.85) +
+    theme(
+    legend.title = element_text(size = 8),
+    legend.text = element_text(size = 8)
+    )   
+  return(fig) 
+}  
+
+# school and college visits
+var.names <- c("College\nVisits","School\nVisits","School\nVisits\nx No-Mask") 
+k <- c(4,5,6)
+ij <- c(1:np) 
+nv <- length(var.names)
+fig <- dwfig_d2(ij,k,piy_d2,debias = FALSE) + xlab("Estimated Coefficients") + xlim(-0.3, 1.0) + theme(legend.justification=c(.01, .999), legend.position=c(.68, .99), legend.title = element_text(size=12, face='bold'), legend.text = element_text(size = 12), legend.background = element_rect(color="gray90"), axis.text.x = element_text(size = 12), axis.text.y = element_text(size = 12) ) 
+p <- "school-college" 
+figdev(sprintf("%s/tex/tables_and_figures/%s-whisker-death-hetero%s.pdf", rootdir, p, L), width=8, height=6) 
+print(fig)
+dev.off()
+fig 
+fig <- dwfig_d2(ij,k,piy_d2,debias = TRUE) + xlab("Estimated Coefficients") + xlim(-0.6, 1.8) + theme(legend.justification=c(.01, .999), legend.position=c(.68, .99), legend.title = element_text(size=12, face='bold'), legend.text = element_text(size = 12), legend.background = element_rect(color="gray90"), axis.text.x = element_text(size = 12), axis.text.y = element_text(size = 12) )
+p <- "school-college-bc"
+figdev(sprintf("%s/tex/tables_and_figures/%s-whisker-death-hetero%s.pdf", rootdir, p, L), width=8, height=6)
+print(fig)
+dev.off()
+fig
+ 
+
+####### Death Growth with fulll sample###### 
+infov <- c("logdd", "lag(logdd,7)", "lag(logdd,14)") 
+sdf$week <- week(sdf$date)  
+infolist <- list(infov) 
+xlist <- list("")
+iv <- list("0")
+fe <- "fips"
+cluster <- "state"
+tvars <- ""    
+yvar <- "d3logdd"
+bv <- NULL 
+L <- L.d 
+interact <-list("as.factor(week)", "as.factor(state)") 
+#interact <-list("as.factor(month)", "as.factor(state)")   # for fast code checking   
+
+                
+cl <- "state"
+np <- 8  
+remove(df)
+# p <- c("pmask","pgather50","pshelter","college","school","school_staff_dum","restaurant","bar",
+#        "gym","church","fullwork","partwork","home","case_capita")
+# keep <- c(p,"logdd","d2logdd","d3logdd","d3logdd2","dlogdd","week","month","state","fips","date","PopulationEstimate2018")
+# sdf <- sdf[,keep]
+# q0 <- quantile(sdf$PopulationEstimate2018,probs=c(0.10),na.rm=TRUE)  
+# #q0 <- quantile(sdf$PopulationEstimate2018,probs=c(0.90),na.rm=TRUE)   # for fast code checking   
+# sdf <- subset(sdf, sdf$PopulationEstimate2018>q0) 
+f <- function(i) {
+  p <- c("pmask","pgather50","pshelter","college","school")  
+  x <-  c(sprintf("lag(%s, %d)", infov, L)) 
+  L <- L.d  
+  if (i==2) {  # alternative time lag
+    L <- 42
+    x <-  c(sprintf("lag(%s, %d)", infov, L))
+  } else if (i==3) {  # alternative time lag
+    L <- 49
+    x <-  c(sprintf("lag(%s, %d)", infov, L))
+  } else if (i==4) {  # alternative measure of case growth
+    yvar <- "d3logdd2" 
+    infov <- c("logdd", "lag(logdd,7)", "lag(logdd,14)") 
+    x <-  c(sprintf("lag(%s, %d)", infov, L))   
+  } else if (i==5){  # adding more lagged cases 
+    infov <- c("logdd", "lag(logdd,7)", "lag(logdd,14)", "lag(logdd,21)")  
+    x <-  c(sprintf("lag(%s, %d)", infov, L),"death_capita")    
+  } else if (i==6) {  # adding behavior vars
+    p <- c(p,"restaurant","bar","gym","church") 
+    x <- c(x,"lag(restaurant,49)","lag(bar,49)","lag(gym,49)","lag(church,49)") 
+  } else if (i==7) {    
+    p <- c(p,"fullwork","partwork","home")  
+  } else if (i==8) {   # (6)-(8)  
+    p <- c(p,"restaurant","bar","gym","church","fullwork","partwork","home")  
+    infov <- c("logdd", "lag(logdd,7)", "lag(logdd,14)", "lag(logdd,21)")  
+    x <-  c(sprintf("lag(%s, %d)", infov, L),"death_capita")    
+    x <- c(x,"lag(restaurant,49)","lag(bar,49)","lag(gym,49)","lag(church,49)")  
+  } 
+  m <-  reg_bc(sdf, yvar, p, bv, x, interact, iv, L, fe, cluster = cl, multiple = FALSE)   
+  res <- cbind(m$reg$beta[1:10],m$bc[1:10],m$reg$cse[1:10]) 
+  return(res)
+} 
+piy_d <- mclapply(1:np, f, mc.cores = np)  
+ 
+   
+dwfig_d <- function(ij,k,y,debias=TRUE) {
+  np <- length(y)
+  coef <- se <- matrix(, nrow = 10, ncol = np)   
+  if (debias) {
+    j <- 2
+  } else {
+    j <- 1
+  }
+  for (i in 1:np) {  
+      coef[,i] <- c(y[[i]][,j])  
+      se[,i] <- y[[i]][,3]
+  }  　 
+  nv <- length(k)
+  nij <- length(ij)
+  results_df <- data.frame(term = rep(var.names,times = np),
+                         estimate = c(coef[k,ij]),
+                         std.error = c(se[k,ij]), 
+                         model = c(rep("(1) Baseline",nv),  rep("(2) Lag = 42",nv),rep("(3) Lag = 49",nv),  
+                                   rep("(4) Alt. Death Growth",nv),  
+                                   rep("(5) Past Deaths",nv), rep("(6) Bars etc.",nv), 
+                                   rep("(7) Fulltime + Home",nv),  rep("(8) All of (5)-(7)",nv)), 
+                         stringsAsFactors = FALSE) 
+  fig <- dwplot(results_df, conf.level = .90, dot_args = list(size = 4, pch = 1), whisker_args = list(size=1)) + theme_bw() +
+      theme(       legend.justification=c(.01, .999), legend.position=c(.01, .99),
+             legend.title = element_blank(), legend.background =
+                element_rect(color="gray90")) +
+      geom_vline(xintercept = 0, colour = "grey60", linetype = 2) +
+    theme(text=element_text(family="Times New Roman", face="bold", size=10)) +
+    # xlim(-0.25, 0.85) +
+    theme(
+    legend.title = element_text(size = 8),
+    legend.text = element_text(size = 8)
+    )   
+  return(fig) 
+}  
+
+# school and college visits
+var.names <- c("College\nVisits","School\nVisits") 
+k <- c(4,5)
+ij <- c(1:np) 
+nv <- length(var.names)
+fig <- dwfig_d(ij,k,piy_d,debias = FALSE) + xlab("Estimated Coefficients") + xlim(-0.3, 1.0) + theme(legend.justification=c(.01, .999), legend.position=c(.68, .99), legend.title = element_text(size=12, face='bold'), legend.text = element_text(size = 12), legend.background = element_rect(color="gray90"), axis.text.x = element_text(size = 12), axis.text.y = element_text(size = 12) ) 
+p <- "school-college-alt" 
+figdev(sprintf("%s/tex/tables_and_figures/%s-whisker-death%s.pdf", rootdir, p, L), width=8, height=6) 
+print(fig)
+dev.off()
+fig 
+fig <- dwfig_d(ij,k,piy_d,debias = TRUE) + xlab("Estimated Coefficients") + xlim(-0.6, 1.8) + theme(legend.justification=c(.01, .999), legend.position=c(.68, .99), legend.title = element_text(size=12, face='bold'), legend.text = element_text(size = 12), legend.background = element_rect(color="gray90"), axis.text.x = element_text(size = 12), axis.text.y = element_text(size = 12) )
+p <- "school-college-bc-alt"
+figdev(sprintf("%s/tex/tables_and_figures/%s-whisker-death%s.pdf", rootdir, p, L), width=8, height=6)
+print(fig)
+dev.off()
+fig 
+
+########  Death witn Staff Mask Requirement ########## 
+infov <- c("logdd", "lag(logdd,7)", "lag(logdd,14)") 
+sdf$week <- week(sdf$date)  
+infolist <- list(infov) 
+xlist <- list("")
+iv <- list("0")
+fe <- "fips"
+cluster <- "state"
+tvars <- ""   
+yvar <- "d3logdd"
+bv <- NULL 
+L <- L.d <- 35  
+interact <-list("as.factor(week)", "as.factor(state)")  
+x <- c(sprintf("lag(%s, %d)", infov, L), tvars)    
+ 
+cl <- "state"
+np <- 8  
+remove(df)
+# p <- c("pmask","pgather50","pshelter","college","school","school_staff_dum","restaurant","bar",
+#        "gym","church","fullwork","partwork","home","case_capita")
+# keep <- c(p,"logdd","dlogdd","logdd2","dlogdd2","week","month","state","fips","date","PopulationEstimate2018") 
+# sdf <- sdf[,keep]
+# q0 <- quantile(sdf$PopulationEstimate2018,probs=c(0.10),na.rm=TRUE)  
+# sdf <- subset(sdf, sdf$PopulationEstimate2018>q0) 
+f <- function(i) {
+  p <- c("pmask","pgather50","pshelter","college","school","school_staff_dum")  
+  x <-  c(sprintf("lag(%s, %d)", infov, L)) 
+  L <- L.d  
+  if (i==2) {  # alternative time lag
+    L <- 42
+    x <-  c(sprintf("lag(%s, %d)", infov, L))
+  } else if (i==3) { # alternative time lag
+    L <- 49
+    x <-  c(sprintf("lag(%s, %d)", infov, L))
+  } else if (i==4) {  # alternative measure of case growth
+    yvar <- "d3logdd2" 
+    infov <- c("logdd", "lag(logdd,7)", "lag(logdd,14)") 
+    x <-  c(sprintf("lag(%s, %d)", infov, L))   
+  } else if (i==5){  # adding more lagged cases
+    infov <- c("logdd", "lag(logdd,7)", "lag(logdd,14)", "lag(logdd,21)")  
+    x <-  c(sprintf("lag(%s, %d)", infov, L),"death_capita")    
+  } else if (i==6) {  # adding behavior vars
+    p <- c(p,"restaurant","bar","gym","church") 
+    x <- c(x,"lag(restaurant,49)","lag(bar,49)","lag(gym,49)","lag(church,49)") 
+  } else if (i==7) {    
+    p <- c(p,"fullwork","partwork","home")  
+  } else if (i==8) {   # (6)-(8)  
+    p <- c(p,"restaurant","bar","gym","church","fullwork","partwork","home")  
+    infov <- c("logdd", "lag(logdd,7)", "lag(logdd,14)", "lag(logdd,21)")  
+    x <-  c(sprintf("lag(%s, %d)", infov, L),"death_capita")    
+    x <- c(x,"lag(restaurant,49)","lag(bar,49)","lag(gym,49)","lag(church,49)")  
+  } 
+  m <-  reg_bc(sdf, yvar, p, bv, x, interact, iv, L, fe, cluster = cl, multiple = FALSE)   
+  res <- cbind(m$reg$beta[1:10],m$bc[1:10],m$reg$cse[1:10]) 
+  return(res)
+} 
+piy_d2 <- mclapply(1:np, f, mc.cores = np)  
+  
+dwfig_d2 <- function(ij,k,y,debias=TRUE) {
+  np <- length(y)
+  coef <- se <- matrix(, nrow = 10, ncol = np)   
+  if (debias) {
+    j <- 2
+  } else {
+    j <- 1
+  }
+  for (i in 1:np) {  
+      coef[,i] <- c(y[[i]][,j])  
+      se[,i] <- y[[i]][,3]
+  }  　 
+  nv <- length(k)
+  nij <- length(ij)
+  results_df <- data.frame(term = rep(var.names,times = np),
+                         estimate = c(coef[k,ij]),
+                         std.error = c(se[k,ij]), 
+                         model = c(rep("(1) Baseline",nv),  rep("(2) Lag = 42",nv),rep("(3) Lag = 49",nv),  
+                                   rep("(4) Alt. Death Growth",nv),  
+                                   rep("(5) Past Deaths",nv), rep("(6) Bars etc.",nv), 
+                                   rep("(7) Fulltime + Home",nv),  rep("(8) All of (5)-(7)",nv)), 
+                         stringsAsFactors = FALSE) 
+  fig <- dwplot(results_df, conf.level = .90, dot_args = list(size = 4, pch = 1), whisker_args = list(size=1)) + theme_bw() +
+      theme(       legend.justification=c(.01, .999), legend.position=c(.01, .99),
+             legend.title = element_blank(), legend.background =
+                element_rect(color="gray90")) +
+      geom_vline(xintercept = 0, colour = "grey60", linetype = 2) +
+    theme(text=element_text(family="Times New Roman", face="bold", size=10)) +
+    # xlim(-0.25, 0.85) +
+    theme(
+    legend.title = element_text(size = 8),
+    legend.text = element_text(size = 8)
+    )   
+  return(fig) 
+}  
+
+# school and college visits
+var.names <- c("College\nVisits","School\nVisits","School\nVisits\nx No-Mask") 
+k <- c(4,5,6)
+ij <- c(1:np) 
+nv <- length(var.names)
+fig <- dwfig_d2(ij,k,piy_d2,debias = FALSE) + xlab("Estimated Coefficients") + xlim(-0.3, 1.0) + theme(legend.justification=c(.01, .999), legend.position=c(.68, .99), legend.title = element_text(size=12, face='bold'), legend.text = element_text(size = 12), legend.background = element_rect(color="gray90"), axis.text.x = element_text(size = 12), axis.text.y = element_text(size = 12) ) 
+p <- "school-college-alt" 
+figdev(sprintf("%s/tex/tables_and_figures/%s-whisker-death-hetero%s.pdf", rootdir, p, L), width=8, height=6) 
+print(fig)
+dev.off()
+fig 
+fig <- dwfig_d2(ij,k,piy_d2,debias = TRUE) + xlab("Estimated Coefficients") + xlim(-0.6, 1.8) + theme(legend.justification=c(.01, .999), legend.position=c(.68, .99), legend.title = element_text(size=12, face='bold'), legend.text = element_text(size = 12), legend.background = element_rect(color="gray90"), axis.text.x = element_text(size = 12), axis.text.y = element_text(size = 12) )
+p <- "school-college-bc-alt"
+figdev(sprintf("%s/tex/tables_and_figures/%s-whisker-death-hetero%s.pdf", rootdir, p, L), width=8, height=6)
+print(fig)
+dev.off()
+fig
+ 
+ 
+```
+  
+
+          
+## Figures
+
+## Policy
+
+The following plot illustrates the effect of mandatory masks for
+employees.  The lighter line is the average across states that did not
+have mask policy 14 days ago of case growth rate. The darker line is
+the average across states that did have a mask policy 14 days
+ago. (It's actually the fit from regressing dlogdc on date dummies
+interacted with the 14 day lagged, 7 day moving average of a mask
+policy indicator). Light points are the state observations without a
+mask policy. Dark points are states with a mask policy 14 days ago.
+
+```{r fig, eval = FALSE, cache=FALSE,  fig_width=10, fig_height=6, warning=FALSE}
+
+pfigure <- function(df, pol, stlab=1, outcome="dlogdc", L=14) {
+  df$p <- panellag(df[,pol],df$fips, df$date, L)
+  df$p <- ceiling(df$p)
+  df$y <- df[,outcome]
+  df$week <- week(df$date)
+  m <- lm(y ~ as.factor(date) + as.factor(date):p, data=df)
+  adf <- rbind(data.frame(date=m$xlevels$`as.factor(date)`, p=0),
+               data.frame(date=m$xlevels$`as.factor(date)`, p=1))
+  adf$week <- week(as.Date(adf$date))
+  pred <- predict(m, newdata=adf, interval="confidence")
+  adf$hat <- pred[,"fit"]
+  adf$lo <- pred[,"lwr"]
+  adf$hi <- pred[,"upr"]
+  adf$date <- as.Date(adf$date)
+  if (stlab==1) {
+    pdf <- subset(df, df$p<=0.01)
+    ldf <- subset(df, df$p>0.01)
+  } else if (stlab==0) {
+    pdf <- subset(df, df$p>=0.99)
+    ldf <- subset(df, df$p<0.99)
+  } else {
+    pdf <- df
+    ldf <- NULL #data.frame(date=NA,y=NA,ST=NA,p=NA)
+  }
+  clrs <- solarized_pal(2)(2)
+  fig <- ggplot(df,aes(color=p)) +
+    geom_point(data=pdf,aes(x=date, y=y, color=p),alpha=0.3, size=0.5) +
+    xlim(c(as.Date("2020-09-01"), max(df$date))) +
+    geom_line(data=adf, aes(x=date, y=hat, group=p), size=2) +
+    figtheme + scale_color_gradient(low=clrs[1], high=clrs[2]) + #colors_grad(palette="Green-Gold") +
+    theme(legend.position="none") +
+    xlab("") +
+    ylim(c(-0.65,0.4))
+  if (!is.null(ldf))
+    fig <- fig +
+      geom_text(data=ldf,
+                aes(x=date, y=y, label=ST, color=p), alpha=1.0, size=5)
+  return(fig)
+}
+ 
+
+fig <- pfigure(df, "pschoolremote", stlab=-1,L=L.c) + ggtitle(TeX(relabel("dlogdc given school remote or not"))) + ylab(TeX(relabel("dlogdc")))
+
+fig
+
+```
+
+
+```{r figures-school, eval = FALSE, cache=FALSE, warning=FALSE, results='asis'}
+    
+
+library(qwraps2)
+
+df$pschool_dum <- NULL 
+df$pschool_dum[df$pschoolremote>0.1] <- "Remote"
+df$pschool_dum[df$pschoolhybrid>0.1] <- "Hybrid"
+df$pschool_dum[df$pschoolfull>0.1] <- "In-person"
+sdf <- subset(df, df$date==as.Date("2020-11-01")) 
+sdf$dcases_capita <- 1000*sdf$dcases/sdf$PopulationEstimate2018  
+sdf$ddeath_capita <- 1000*sdf$ddeath/sdf$PopulationEstimate2018 
+sdf$pschool_mode_factor <- as.factor(sdf$pschool_dum) 
+sdf$pschool_mode_factor <- relevel(sdf$pschool_mode_factor, "In-person")
+
+our_summary1 <-
+  list("Population" =
+       list("min"       = ~ min(PopulationEstimate2018, na.rm=TRUE),
+            "max"       = ~ max(PopulationEstimate2018, na.rm=TRUE),
+            "mean (sd)" = ~ mean(PopulationEstimate2018, na.rm=TRUE),
+            "sum" = ~ sum(PopulationEstimate2018, na.rm=TRUE)),
+       "Cases per 1000" =
+       list("min"       = ~ min(dcases_capita, na.rm=TRUE),
+            "median"    = ~ median(dcases_capita, na.rm=TRUE),
+            "max"       = ~ max(dcases_capita, na.rm=TRUE),
+            "mean (sd)" = ~ mean(dcases_capita, na.rm=TRUE),
+            "sum" = ~ sum(PopulationEstimate2018, na.rm=TRUE)),
+       "Deaths per 1000" =
+       list("min"       = ~ min(ddeath_capita, na.rm=TRUE),
+            "max"       = ~ max(ddeath_capita, na.rm=TRUE),
+            "mean (sd)" = ~ mean(ddeath_capita, na.rm=TRUE),
+            "sum" = ~ sum(PopulationEstimate2018, na.rm=TRUE)))
+whole <- summary_table(sdf, our_summary1)
+whole
+by_openingmode <- summary_table(dplyr::group_by(sdf, pschool_mode_factor ), our_summary1)
+by_openingmode 
+mean(sdf$PopulationEstimate2018, na.rm=TRUE)
+sum(sdf$PopulationEstimate2018, na.rm=TRUE) 
+sdf2 <- subset(sdf, !is.na(sdf$pschool_dum))
+sum(sdf2$PopulationEstimate2018, na.rm=TRUE) /sum(sdf$PopulationEstimate2018, na.rm=TRUE)
+unique(length(sdf2$fips))
+
+       
+
+
+library(tidyverse)
+
+thm <-  theme(legend.text = element_text(size = 24), title =element_text(size=24, face='bold'),legend.position = c(0.23, 0.8), 
+              axis.text.x = element_text(size = 24), axis.text.y = element_text(size = 24), 
+        panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(),
+        panel.background = element_rect(fill = "transparent",colour = NA),
+        plot.background = element_rect(fill = "transparent",colour = NA)) 
+
+L <- 0
+
+## Case School Opening Modes + mask
+df$full_studentmask.No <- df$pschoolfull * df$`studentmask.Not required` 
+df$full_studentmask.Yes <- df$pschoolfull * (1-df$`studentmask.Not required`)
+df$hybrid_studentmask.No <- df$pschoolhybrid * df$`studentmask.Not required` 
+df$hybrid_studentmask.Yes <- df$pschoolhybrid * (1-df$`studentmask.Not required`)
+df$pschool_dum <- NULL 
+df$pschool_dum[df$pschoolremote>0.1] <- "Remote"
+df$pschool_dum[df$pschoolhybrid>0.1] <- "Hybrid"
+df$pschool_dum[df$hybrid_studentmask.No>0.1] <- "Hybrid/No-Mask"
+df$pschool_dum[df$pschoolfull>0.1] <- "In-person"
+df$pschool_dum[df$full_studentmask.No>0.1] <- "In-person/No-Mask"  
+df$pschool_dum <- panellag(df$pschool_dum, df$fips, df$date, L)    
+df$school_visits_ma <- panelma(df$school_visits, df$fips, df$date, len=30) 
+startdate  <- "2020-09-01" 
+enddate <-  "2020-12-16"   
+sdf <- subset(df, df$date>=as.Date(startdate)) 
+sdf <- subset(sdf, !is.na(sdf$pschool_dum)) 
+sdf <- subset(sdf, sdf$school_visits_ma>0.01)    
+sdf$pschool_mode_factor <- as.factor(sdf$pschool_dum)
+sdf$pschool_mode_factor <- relevel(sdf$pschool_mode_factor, "Hybrid/No-Mask") 
+sdf$pschool_mode_factor <- relevel(sdf$pschool_mode_factor, "In-person") 
+sdf$pschool_mode_factor <- relevel(sdf$pschool_mode_factor, "In-person/No-Mask") 
+
+sdf$dcases_capita <- 1000*sdf$dcases/sdf$PopulationEstimate2018 
+sdf$xvar <- sdf$date
+sdf$yvar <- sdf$dcases_capita
+sdf$group <- sdf$pschool_mode_factor  
+sample_sum <- sdf %>%
+  group_by(xvar, group) %>%
+  summarize(mean = mean(yvar, na.rm = TRUE),
+            sd   = sd(yvar, na.rm = TRUE),
+            percent90 = quantile(yvar,probs=0.9, na.rm=TRUE),
+            percent10 = quantile(yvar,probs=0.1, na.rm=TRUE)) %>%
+  ungroup()   
+fig <- ggplot(sample_sum %>%
+              gather(stat, yvar, mean), 
+            aes(x = xvar, y = yvar)) +
+  labs(#title = "Weekly Cases by Different Modes of School Openings", 
+       x = "Date",
+       y = "Weekly Cases Per 1000") +
+  geom_line(aes(color = group) ,size=2.5)+  
+    xlim(c(as.Date(startdate), as.Date(enddate))) +  
+  scale_color_discrete(breaks=c("In-person/No-Mask","In-person","Hybrid/No-Mask","Hybrid","Remote")) + thm 
+figdev(sprintf("%s/tex/tables_and_figures/schoolmode-weekcase-mask-simple.pdf", rootdir), width=8, height=6)
+print(fig)
+dev.off()
+
+
+## Deaths School Opening Modes + mask  
+sdf$ddeath_capita <- 1000*sdf$ddeath/sdf$PopulationEstimate2018 
+sdf$xvar <- sdf$date
+sdf$yvar <- sdf$ddeath_capita
+sdf$group <- sdf$pschool_mode_factor  
+sample_sum <- sdf %>%
+  group_by(xvar, group) %>%
+  summarize(mean = mean(yvar, na.rm = TRUE),
+            sd   = sd(yvar, na.rm = TRUE),
+            percent90 = quantile(yvar,probs=0.9, na.rm=TRUE),
+            percent10 = quantile(yvar,probs=0.1, na.rm=TRUE)) %>%
+  ungroup()   
+fig <- ggplot(sample_sum %>%
+              gather(stat, yvar, mean), 
+            aes(x = xvar, y = yvar)) +
+  labs(#title = "Weekly Cases by Different Modes of School Openings", 
+       x = "Date",
+       y = "Weekly Death Per 1000") +
+  geom_line(aes(color = group) ,size=2.5)+  
+    xlim(c(as.Date(startdate), as.Date(enddate))) +
+  scale_color_discrete(breaks=c("In-person/No-Mask","In-person","Hybrid/No-Mask","Hybrid","Remote")) + thm
+figdev(sprintf("%s/tex/tables_and_figures/schoolmode-weekdeath-mask-simple.pdf", rootdir), width=8, height=6)
+print(fig)
+dev.off()
+
+
+
+
+## Case School Opening Modes
+ 
+df$pschool_dum <- NULL 
+df$pschool_dum[df$pschoolremote>0.1] <- "Remote"
+df$pschool_dum[df$pschoolhybrid>0.1] <- "Hybrid"
+df$pschool_dum[df$pschoolfull>0.1] <- "In-person"
+df$pschool_dum <- panellag(df$pschool_dum, df$fips, df$date, L)    
+df$school_visits_ma <- panelma(df$school_visits, df$fips, df$date, len=30) 
+startdate  <- "2020-09-01" 
+enddate <-  "2020-12-01"   
+sdf <- subset(df, df$date>=as.Date(startdate)) 
+sdf <- subset(sdf, !is.na(sdf$pschool_dum)) 
+sdf <- subset(sdf, sdf$school_visits_ma>0.01)    
+sdf$pschool_mode_factor <- as.factor(sdf$pschool_dum)
+sdf$pschool_mode_factor <- relevel(sdf$pschool_mode_factor, "In-person") 
+sdf$dcases_capita <- 1000*sdf$dcases/sdf$PopulationEstimate2018 
+sdf$xvar <- sdf$date
+sdf$yvar <- sdf$dcases_capita
+sdf$group <- sdf$pschool_mode_factor  
+sample_sum <- sdf %>%
+  group_by(xvar, group) %>%
+  summarize(mean = mean(yvar, na.rm = TRUE),
+            sd   = sd(yvar, na.rm = TRUE),
+            percent90 = quantile(yvar,probs=0.9, na.rm=TRUE),
+            percent10 = quantile(yvar,probs=0.1, na.rm=TRUE)) %>%
+  ungroup()  
+fig <- ggplot(sample_sum %>%
+              gather(stat, yvar, mean, percent10:percent90), 
+            aes(x = xvar, y = yvar)) +
+  labs(title = "Weekly Cases by Different Modes of School Openings", 
+       x = "Date",
+       y = "Weekly Cases Per 1000") +
+#  geom_line(aes(color = group, linetype = stat) ,size=1) + 
+  geom_line(aes(color = group,linetype = stat) ,size=1.5) +   
+  scale_linetype(labels = c("Mean", "10 %", "90 %")) +
+    xlim(c(as.Date(startdate), as.Date(enddate))) +
+  scale_color_discrete(breaks=c("In-person","Hybrid","Remote")) + thm
+figdev(sprintf("%s/tex/tables_and_figures/schoolmode-weekcase.pdf", rootdir), width=8, height=6)
+print(fig)
+dev.off() 
+fig <- ggplot(sample_sum %>%
+              gather(stat, yvar, mean), 
+            aes(x = xvar, y = yvar)) +
+  labs(#title = "Weekly Cases by Different Modes of School Openings", 
+       x = "Date",
+       y = "Weekly Cases Per 1000") +
+  geom_line(aes(color = group) ,size=2.5)+  
+    xlim(c(as.Date(startdate), as.Date(enddate))) +
+  scale_color_discrete(breaks=c("In-person","Hybrid","Remote")) + thm
+figdev(sprintf("%s/tex/tables_and_figures/schoolmode-weekcase-simple.pdf", rootdir), width=8, height=6)
+print(fig)
+dev.off()
+              
+sample_sum <- subset(sdf,sdf$trump>0.5)  %>%
+  group_by(xvar, group) %>%
+  summarize(mean = mean(yvar, na.rm = TRUE),
+            sd   = sd(yvar, na.rm = TRUE),
+            percent90 = quantile(yvar,probs=0.9, na.rm=TRUE),
+            percent10 = quantile(yvar,probs=0.1, na.rm=TRUE)) %>%
+  ungroup()   
+fig <- ggplot(sample_sum %>%
+              gather(stat, yvar, mean), 
+            aes(x = xvar, y = yvar)) +
+  labs(#title = "Weekly Cases by Different Modes of School Openings", 
+       x = "Date",
+       y = "Weekly Cases Per 1000") +
+  geom_line(aes(color = group) ,size=2.5)+  
+    xlim(c(as.Date(startdate), as.Date(enddate))) +
+    ylim(c(0,6)) +
+  scale_color_discrete(breaks=c("In-person","Hybrid","Remote")) + thm
+figdev(sprintf("%s/tex/tables_and_figures/schoolmode-weekcase-trump-simple.pdf", rootdir), width=8, height=6)
+print(fig)
+dev.off() 
+sample_sum <- subset(sdf,sdf$trump<=0.5) %>%
+  group_by(xvar, group) %>%
+  summarize(mean = mean(yvar, na.rm = TRUE),
+            sd   = sd(yvar, na.rm = TRUE),
+            percent90 = quantile(yvar,probs=0.9, na.rm=TRUE),
+            percent10 = quantile(yvar,probs=0.1, na.rm=TRUE)) %>%
+  ungroup()   
+fig <- ggplot(sample_sum %>%
+              gather(stat, yvar, mean), 
+            aes(x = xvar, y = yvar)) +
+  labs(#title = "Weekly Cases by Different Modes of School Openings", 
+       x = "Date",
+       y = "Weekly Cases Per 1000") +
+  geom_line(aes(color = group) ,size=2.5)+  
+    xlim(c(as.Date(startdate), as.Date(enddate))) +
+    ylim(c(0,6)) +
+  scale_color_discrete(breaks=c("In-person","Hybrid","Remote")) + thm
+figdev(sprintf("%s/tex/tables_and_figures/schoolmode-weekcase-notrump-simple.pdf", rootdir), width=8, height=6)
+print(fig)
+dev.off()
+
+ 
+med_NEVER <- quantile(sdf$NEVER,probs=0.5, na.rm=TRUE) 
+med_ALWAYS <- quantile(sdf$ALWAYS,probs=0.5, na.rm=TRUE) 
+sample_sum <- subset(sdf,sdf$ALWAYS>med_ALWAYS)  %>%
+  group_by(xvar, group) %>%
+  summarize(mean = mean(yvar, na.rm = TRUE),
+            sd   = sd(yvar, na.rm = TRUE),
+            percent90 = quantile(yvar,probs=0.9, na.rm=TRUE),
+            percent10 = quantile(yvar,probs=0.1, na.rm=TRUE)) %>%
+  ungroup()   
+fig <- ggplot(sample_sum %>%
+              gather(stat, yvar, mean), 
+            aes(x = xvar, y = yvar)) +
+  labs(#title = "Weekly Cases by Different Modes of School Openings", 
+       x = "Date",
+       y = "Weekly Cases Per 1000") +
+  geom_line(aes(color = group) ,size=2.5)+  
+    xlim(c(as.Date(startdate), as.Date(enddate))) +
+    ylim(c(0,6)) +
+  scale_color_discrete(breaks=c("In-person","Hybrid","Remote")) + thm
+figdev(sprintf("%s/tex/tables_and_figures/schoolmode-weekcase-mask-simple.pdf", rootdir), width=8, height=6)
+print(fig)
+dev.off() 
+
+sample_sum <- subset(sdf,sdf$ALWAYS<=med_ALWAYS) %>%
+  group_by(xvar, group) %>%
+  summarize(mean = mean(yvar, na.rm = TRUE),
+            sd   = sd(yvar, na.rm = TRUE),
+            percent90 = quantile(yvar,probs=0.9, na.rm=TRUE),
+            percent10 = quantile(yvar,probs=0.1, na.rm=TRUE)) %>%
+  ungroup()   
+fig <- ggplot(sample_sum %>%
+              gather(stat, yvar, mean), 
+            aes(x = xvar, y = yvar)) +
+  labs(#title = "Weekly Cases by Different Modes of School Openings", 
+       x = "Date",
+       y = "Weekly Cases Per 1000") +
+  geom_line(aes(color = group) ,size=2.5)+  
+    xlim(c(as.Date(startdate), as.Date(enddate))) +
+    ylim(c(0,6)) +
+  scale_color_discrete(breaks=c("In-person","Hybrid","Remote")) + thm
+figdev(sprintf("%s/tex/tables_and_figures/schoolmode-weekcase-NEVER-simple.pdf", rootdir), width=8, height=6)
+print(fig)
+dev.off()
+
+
+sample_sum <- subset(sdf,sdf$NEVER<med_NEVER)  %>%
+  group_by(xvar, group) %>%
+  summarize(mean = mean(yvar, na.rm = TRUE),
+            sd   = sd(yvar, na.rm = TRUE),
+            percent90 = quantile(yvar,probs=0.9, na.rm=TRUE),
+            percent10 = quantile(yvar,probs=0.1, na.rm=TRUE)) %>%
+  ungroup()   
+fig <- ggplot(sample_sum %>%
+              gather(stat, yvar, mean), 
+            aes(x = xvar, y = yvar)) +
+  labs(#title = "Weekly Cases by Different Modes of School Openings", 
+       x = "Date",
+       y = "Weekly Cases Per 1000") +
+  geom_line(aes(color = group) ,size=2.5)+  
+    xlim(c(as.Date(startdate), as.Date(enddate))) +
+    ylim(c(0,6)) +
+  scale_color_discrete(breaks=c("In-person","Hybrid","Remote")) + thm
+figdev(sprintf("%s/tex/tables_and_figures/schoolmode-weekcase-mask2-simple.pdf", rootdir), width=8, height=6)
+print(fig)
+dev.off()
+sample_sum <- subset(sdf,sdf$NEVER>=med_NEVER) %>%
+  group_by(xvar, group) %>%
+  summarize(mean = mean(yvar, na.rm = TRUE),
+            sd   = sd(yvar, na.rm = TRUE),
+            percent90 = quantile(yvar,probs=0.9, na.rm=TRUE),
+            percent10 = quantile(yvar,probs=0.1, na.rm=TRUE)) %>%
+  ungroup()   
+fig <- ggplot(sample_sum %>%
+              gather(stat, yvar, mean), 
+            aes(x = xvar, y = yvar)) +
+  labs(#title = "Weekly Cases by Different Modes of School Openings", 
+       x = "Date",
+       y = "Weekly Cases Per 1000") +
+  geom_line(aes(color = group) ,size=2.5)+  
+    xlim(c(as.Date(startdate), as.Date(enddate))) +
+    ylim(c(0,6)) +
+  scale_color_discrete(breaks=c("In-person","Hybrid","Remote")) + thm
+figdev(sprintf("%s/tex/tables_and_figures/schoolmode-weekcase-NEVER2-simple.pdf", rootdir), width=8, height=6)
+print(fig)
+dev.off()
+
+ 
+sdf$edu <- sdf$High.School.Graduation.Rate
+med_edu <- quantile(sdf$edu,probs=0.5, na.rm=TRUE)  
+sample_sum <- subset(sdf,sdf$edu>med_edu)  %>%
+  group_by(xvar, group) %>%
+  summarize(mean = mean(yvar, na.rm = TRUE),
+            sd   = sd(yvar, na.rm = TRUE),
+            percent90 = quantile(yvar,probs=0.9, na.rm=TRUE),
+            percent10 = quantile(yvar,probs=0.1, na.rm=TRUE)) %>%
+  ungroup()   
+fig <- ggplot(sample_sum %>%
+              gather(stat, yvar, mean), 
+            aes(x = xvar, y = yvar)) +
+  labs(#title = "Weekly Cases by Different Modes of School Openings", 
+       x = "Date",
+       y = "Weekly Cases Per 1000") +
+  geom_line(aes(color = group) ,size=2.5)+  
+    xlim(c(as.Date(startdate), as.Date(enddate))) +
+    ylim(c(0,6)) +
+  scale_color_discrete(breaks=c("In-person","Hybrid","Remote")) + thm
+figdev(sprintf("%s/tex/tables_and_figures/schoolmode-weekcase-highedu-simple.pdf", rootdir), width=8, height=6)
+print(fig)
+dev.off()
+sample_sum <- subset(sdf,sdf$edu<=med_edu) %>%
+  group_by(xvar, group) %>%
+  summarize(mean = mean(yvar, na.rm = TRUE),
+            sd   = sd(yvar, na.rm = TRUE),
+            percent90 = quantile(yvar,probs=0.9, na.rm=TRUE),
+            percent10 = quantile(yvar,probs=0.1, na.rm=TRUE)) %>%
+  ungroup()   
+fig <- ggplot(sample_sum %>%
+              gather(stat, yvar, mean), 
+            aes(x = xvar, y = yvar)) +
+  labs(#title = "Weekly Cases by Different Modes of School Openings", 
+       x = "Date",
+       y = "Weekly Cases Per 1000") +
+  geom_line(aes(color = group) ,size=2.5)+  
+    xlim(c(as.Date(startdate), as.Date(enddate))) +
+    ylim(c(0,6)) +
+  scale_color_discrete(breaks=c("In-person","Hybrid","Remote")) + thm
+figdev(sprintf("%s/tex/tables_and_figures/schoolmode-weekcase-lowedu-simple.pdf", rootdir), width=8, height=6)
+print(fig)
+dev.off()
+
+
+
+startdate  <- "2020-09-01" 
+sdf$dcases_capita <- 1000*sdf$dcases/sdf$PopulationEstimate2018 
+sdf$xvar <- sdf$date
+sdf$yvar <- sdf$school
+sdf$group <- sdf$pschool_mode_factor  
+sample_sum <- sdf %>%
+  group_by(xvar, group) %>%
+  summarize(mean = mean(yvar, na.rm = TRUE),
+            sd   = sd(yvar, na.rm = TRUE),
+            percent90 = quantile(yvar,probs=0.9, na.rm=TRUE),
+            percent10 = quantile(yvar,probs=0.1, na.rm=TRUE)) %>%
+  ungroup()    
+fig <- ggplot(sample_sum %>%
+              gather(stat, yvar, mean), 
+            aes(x = xvar, y = yvar)) +
+  labs(#title = "Weekly Cases by Different Modes of School Openings", 
+       x = "Date",
+       y = "K-12 School Visits / Device") +
+  geom_line(aes(color = group) ,size=2.5)+  
+    xlim(c(as.Date(startdate), as.Date(enddate))) +
+  scale_color_discrete(breaks=c("In-person","Hybrid","Remote")) + 
+  theme(legend.text = element_text(size = 24), title =element_text(size=24, face='bold'),legend.position = c(0.8, 0.95), 
+        axis.text.x = element_text(size = 24), axis.text.y = element_text(size = 24), 
+        panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(),
+        panel.background = element_rect(fill = "transparent",colour = NA),
+        plot.background = element_rect(fill = "transparent",colour = NA)) 
+figdev(sprintf("%s/tex/tables_and_figures/schoolmode-weekvisits-simple.pdf", rootdir), width=8, height=6)
+print(fig)
+dev.off()
+             
+print(fig)
+
+
+
+## Case by K-12 Visits 
+startdate  <- "2020-09-01" 
+df$school_visits_ma <- panelma(df$school_visits, df$fips, df$date, len=30)  
+sdf <- subset(df, df$date>=as.Date(startdate)) 
+sdf <- subset(sdf, sdf$school_visits_ma>0.01)   
+q <- quantile(sdf$school,probs=c(0.1,0.5,0.9),na.rm=TRUE) 
+print(q)
+df$sc_dum <- NULL 
+df$sc_dum[(df$sc_l==1)] <- "Low"
+df$sc_dum[(df$sc_m==1)] <- "Medium"
+df$sc_dum[(df$sc_h==1)] <- "High"  
+df$sc_dum <- panellag(df$sc_dum, df$fips, df$date, L)  
+sdf <- subset(df, df$date>=as.Date(startdate)) 
+sdf <- subset(sdf, (!is.na(sdf$sc_dum)) )  
+ 
+sdf$pschool_factor <- as.factor(sdf$sc_dum)
+sdf$pschool_factor <- relevel(sdf$pschool_factor, "Medium")
+sdf$pschool_factor <- relevel(sdf$pschool_factor, "High") 
+sdf$dcases_capita <- 1000*sdf$dcases/sdf$PopulationEstimate2018 
+sdf$xvar <- sdf$date
+sdf$yvar <- sdf$dcases_capita
+sdf$group <- sdf$pschool_factor 
+ 
+sample_sum <- sdf %>%
+  group_by(xvar, group) %>%
+  summarize(mean = mean(yvar, na.rm = TRUE),
+            sd   = sd(yvar, na.rm = TRUE),
+            percent90 = quantile(yvar,probs=0.9, na.rm=TRUE),
+            percent10 = quantile(yvar,probs=0.1, na.rm=TRUE)) %>%
+  ungroup() 
+ 
+fig <- ggplot(sample_sum %>%
+              gather(stat, yvar, mean, percent10:percent90), 
+            aes(x = xvar, y = yvar)) +
+  labs(title = "Average Weekly Cases by Visits to K-12 Schools",
+       # subtitle =  ,
+       #caption =  ,
+       x = "Date",
+       y = "Weekly Cases Per Capita") +
+  geom_line(aes(color = group, linetype = stat) ,size=2.5)
+fig <-  fig +    
+    xlim(c(as.Date(startdate), as.Date(enddate))) +
+  scale_linetype(labels = c("Mean", "10 %", "90 %")) +
+  scale_color_discrete(breaks=c("High","Medium","Low")) + thm
+figdev(sprintf("%s/tex/tables_and_figures/school-weekcase.pdf", rootdir), width=8, height=6)
+print(fig)
+dev.off()
+             
+print(fig)
+
+fig <- ggplot(sample_sum %>%
+              gather(stat, yvar, mean), 
+            aes(x = xvar, y = yvar)) +
+  labs(#title = "Weekly Cases by Visits to K-12 Schools",
+       # subtitle =  ,
+       #caption =  ,
+       x = "Date",
+       y = "Weekly Cases Per 1000") +
+  geom_line(aes(color = group) ,size=2.5)
+fig <-  fig +      xlim(c(as.Date(startdate), as.Date(enddate))) +
+  scale_color_discrete(breaks=c("High","Medium","Low")) + thm
+figdev(sprintf("%s/tex/tables_and_figures/school-weekcase-simple.pdf", rootdir), width=8, height=6)
+print(fig)
+dev.off()
+             
+print(fig)
+
+ 
+sample_sum <- subset(sdf,sdf$trump>0.5)  %>%
+  group_by(xvar, group) %>%
+  summarize(mean = mean(yvar, na.rm = TRUE),
+            sd   = sd(yvar, na.rm = TRUE),
+            percent90 = quantile(yvar,probs=0.9, na.rm=TRUE),
+            percent10 = quantile(yvar,probs=0.1, na.rm=TRUE)) %>%
+  ungroup()   
+fig <- ggplot(sample_sum %>%
+              gather(stat, yvar, mean), 
+            aes(x = xvar, y = yvar)) +
+  labs(#title = "Weekly Cases by Visits to K-12 Schools",
+       # subtitle =  ,
+       #caption =  ,
+       x = "Date",
+       y = "Weekly Cases Per 1000") +
+  geom_line(aes(color = group) ,size=2.5)
+fig <-  fig +    
+    ylim(c(0,6.8)) +
+    xlim(c(as.Date(startdate), as.Date(enddate))) +
+  scale_color_discrete(breaks=c("High","Medium","Low")) + thm
+figdev(sprintf("%s/tex/tables_and_figures/school-weekcase-trump-simple.pdf", rootdir), width=8, height=6)
+print(fig)
+dev.off()
+             
+print(fig)
+sample_sum <- subset(sdf,sdf$trump<=0.5) %>%
+  group_by(xvar, group) %>%
+  summarize(mean = mean(yvar, na.rm = TRUE),
+            sd   = sd(yvar, na.rm = TRUE),
+            percent90 = quantile(yvar,probs=0.9, na.rm=TRUE),
+            percent10 = quantile(yvar,probs=0.1, na.rm=TRUE)) %>%
+  ungroup()   
+fig <- ggplot(sample_sum %>%
+              gather(stat, yvar, mean), 
+            aes(x = xvar, y = yvar)) +
+  labs(#title = "Weekly Cases by Visits to K-12 Schools",
+       # subtitle =  ,
+       #caption =  ,
+       x = "Date",
+       y = "Weekly Cases Per 1000") +
+  geom_line(aes(color = group) ,size=2.5)
+fig <-  fig +    
+    ylim(c(0,6.8)) +
+    xlim(c(as.Date(startdate), as.Date(enddate))) +
+  scale_color_discrete(breaks=c("High","Medium","Low")) + thm
+figdev(sprintf("%s/tex/tables_and_figures/school-weekcase-notrump-simple.pdf", rootdir), width=8, height=6)
+print(fig)
+dev.off()
+             
+print(fig)
+
+
+
+med_ALWAYS <- quantile(sdf$ALWAYS,probs=0.5, na.rm=TRUE)
+med_NEVER <- quantile(sdf$NEVER,probs=0.5, na.rm=TRUE) 
+sample_sum <- subset(sdf,sdf$ALWAYS>med_ALWAYS)  %>%
+  group_by(xvar, group) %>%
+  summarize(mean = mean(yvar, na.rm = TRUE),
+            sd   = sd(yvar, na.rm = TRUE),
+            percent90 = quantile(yvar,probs=0.9, na.rm=TRUE),
+            percent10 = quantile(yvar,probs=0.1, na.rm=TRUE)) %>%
+  ungroup()   
+fig <- ggplot(sample_sum %>%
+              gather(stat, yvar, mean), 
+            aes(x = xvar, y = yvar)) +
+  labs(#title = "Weekly Cases by Visits to K-12 Schools",
+       # subtitle =  ,
+       #caption =  ,
+       x = "Date",
+       y = "Weekly Cases Per 1000") +
+  geom_line(aes(color = group) ,size=2.5)
+fig <-  fig +    
+    ylim(c(0,7.5)) +
+    xlim(c(as.Date(startdate), as.Date(enddate))) +
+  scale_color_discrete(breaks=c("High","Medium","Low")) + thm
+figdev(sprintf("%s/tex/tables_and_figures/school-weekcase-mask-simple.pdf", rootdir), width=8, height=6)
+print(fig)
+dev.off()
+             
+print(fig)
+sample_sum <- subset(sdf,sdf$ALWAYS<=med_ALWAYS) %>%
+  group_by(xvar, group) %>%
+  summarize(mean = mean(yvar, na.rm = TRUE),
+            sd   = sd(yvar, na.rm = TRUE),
+            percent90 = quantile(yvar,probs=0.9, na.rm=TRUE),
+            percent10 = quantile(yvar,probs=0.1, na.rm=TRUE)) %>%
+  ungroup()   
+fig <- ggplot(sample_sum %>%
+              gather(stat, yvar, mean), 
+            aes(x = xvar, y = yvar)) +
+  labs(#title = "Weekly Cases by Visits to K-12 Schools",
+       # subtitle =  ,
+       #caption =  ,
+       x = "Date",
+       y = "Weekly Cases Per 1000") +
+  geom_line(aes(color = group) ,size=2.5)
+fig <-  fig +    
+    ylim(c(0,7.5)) +
+    xlim(c(as.Date(startdate), as.Date(enddate))) +
+  scale_color_discrete(breaks=c("High","Medium","Low")) + thm
+figdev(sprintf("%s/tex/tables_and_figures/school-weekcase-NEVER-simple.pdf", rootdir), width=8, height=6)
+print(fig)
+dev.off()
+             
+print(fig)
+
+
+sample_sum <- subset(sdf,sdf$NEVER<med_NEVER)  %>%
+  group_by(xvar, group) %>%
+  summarize(mean = mean(yvar, na.rm = TRUE),
+            sd   = sd(yvar, na.rm = TRUE),
+            percent90 = quantile(yvar,probs=0.9, na.rm=TRUE),
+            percent10 = quantile(yvar,probs=0.1, na.rm=TRUE)) %>%
+  ungroup()   
+fig <- ggplot(sample_sum %>%
+              gather(stat, yvar, mean), 
+            aes(x = xvar, y = yvar)) +
+  labs(#title = "Weekly Cases by Visits to K-12 Schools",
+       # subtitle =  ,
+       #caption =  ,
+       x = "Date",
+       y = "Weekly Cases Per 1000") +
+  geom_line(aes(color = group) ,size=2.5)
+fig <-  fig +    
+    ylim(c(0,7.5)) +
+    xlim(c(as.Date(startdate), as.Date(enddate))) +
+  scale_color_discrete(breaks=c("High","Medium","Low")) + thm
+figdev(sprintf("%s/tex/tables_and_figures/school-weekcase-mask2-simple.pdf", rootdir), width=8, height=6)
+print(fig)
+dev.off()
+             
+print(fig)
+sample_sum <- subset(sdf,sdf$NEVER>=med_NEVER) %>%
+  group_by(xvar, group) %>%
+  summarize(mean = mean(yvar, na.rm = TRUE),
+            sd   = sd(yvar, na.rm = TRUE),
+            percent90 = quantile(yvar,probs=0.9, na.rm=TRUE),
+            percent10 = quantile(yvar,probs=0.1, na.rm=TRUE)) %>%
+  ungroup()   
+fig <- ggplot(sample_sum %>%
+              gather(stat, yvar, mean), 
+            aes(x = xvar, y = yvar)) +
+  labs(#title = "Weekly Cases by Visits to K-12 Schools",
+       # subtitle =  ,
+       #caption =  ,
+       x = "Date",
+       y = "Weekly Cases Per 1000") +
+  geom_line(aes(color = group) ,size=2.5)
+fig <-  fig +    
+    ylim(c(0,7.5)) +
+    xlim(c(as.Date(startdate), as.Date(enddate))) +
+  scale_color_discrete(breaks=c("High","Medium","Low")) + thm
+figdev(sprintf("%s/tex/tables_and_figures/school-weekcase-NEVER2-simple.pdf", rootdir), width=8, height=6)
+print(fig)
+dev.off()
+             
+print(fig)
+
+
+
+med_edu <- quantile(sdf$edu,probs=0.5, na.rm=TRUE) 
+sample_sum <- subset(sdf,sdf$edu>med_edu)  %>%
+  group_by(xvar, group) %>%
+  summarize(mean = mean(yvar, na.rm = TRUE),
+            sd   = sd(yvar, na.rm = TRUE),
+            percent90 = quantile(yvar,probs=0.9, na.rm=TRUE),
+            percent10 = quantile(yvar,probs=0.1, na.rm=TRUE)) %>%
+  ungroup()   
+fig <- ggplot(sample_sum %>%
+              gather(stat, yvar, mean), 
+            aes(x = xvar, y = yvar)) +
+  labs(#title = "Weekly Cases by Visits to K-12 Schools",
+       # subtitle =  ,
+       #caption =  ,
+       x = "Date",
+       y = "Weekly Cases Per 1000") +
+  geom_line(aes(color = group) ,size=2.5)
+fig <-  fig +    
+    ylim(c(0,6.8)) +
+    xlim(c(as.Date(startdate), as.Date(enddate))) +
+  scale_color_discrete(breaks=c("High","Medium","Low")) + thm
+figdev(sprintf("%s/tex/tables_and_figures/school-weekcase-highedu-simple.pdf", rootdir), width=8, height=6)
+print(fig)
+dev.off()
+             
+print(fig)
+sample_sum <- subset(sdf,sdf$edu<=med_edu) %>%
+  group_by(xvar, group) %>%
+  summarize(mean = mean(yvar, na.rm = TRUE),
+            sd   = sd(yvar, na.rm = TRUE),
+            percent90 = quantile(yvar,probs=0.9, na.rm=TRUE),
+            percent10 = quantile(yvar,probs=0.1, na.rm=TRUE)) %>%
+  ungroup()   
+fig <- ggplot(sample_sum %>%
+              gather(stat, yvar, mean), 
+            aes(x = xvar, y = yvar)) +
+  labs(#title = "Weekly Cases by Visits to K-12 Schools",
+       # subtitle =  ,
+       #caption =  ,
+       x = "Date",
+       y = "Weekly Cases Per 1000") +
+  geom_line(aes(color = group) ,size=2.5)
+fig <-  fig +    
+    ylim(c(0,6.8)) +
+    xlim(c(as.Date(startdate), as.Date(enddate))) +
+  scale_color_discrete(breaks=c("High","Medium","Low")) + thm
+figdev(sprintf("%s/tex/tables_and_figures/school-weekcase-lowedu-simple.pdf", rootdir), width=8, height=6)
+print(fig)
+dev.off()
+             
+print(fig)
+
+
+## Death School Opening Modes
+L <- 14 
+df$pschool_dum <- NULL 
+df$pschool_dum[df$pschoolremote>0.1] <- "Remote"
+df$pschool_dum[df$pschoolhybrid>0.1] <- "Hybrid"
+df$pschool_dum[df$pschoolfull>0.1] <- "In-person"
+df$pschool_dum <- panellag(df$pschool_dum, df$fips, df$date, L)  
+df$school_visits_ma <- panelma(df$school_visits, df$fips, df$date, len=30)   
+sdf <- subset(df, df$date>=as.Date(startdate)) 
+sdf <- subset(sdf, sdf$school_visits_ma>0.01)  
+sdf <- subset(sdf, (!is.na(sdf$pschool_dum)) ) 
+sdf$pschool_mode_factor <- as.factor(sdf$pschool_dum)
+sdf$pschool_mode_factor <- relevel(sdf$pschool_mode_factor, "In-person") 
+sdf$ddeath_capita <- 1000*sdf$ddeath/sdf$PopulationEstimate2018 
+sdf$xvar <- sdf$date
+sdf$yvar <- sdf$ddeath_capita 
+sdf$group <- sdf$pschool_mode_factor  
+startdate  <- "2020-09-14" 
+sample_sum <- sdf %>%
+  group_by(xvar, group) %>%
+  summarize(mean = mean(yvar, na.rm = TRUE),
+            sd   = sd(yvar, na.rm = TRUE),
+            percent90 = quantile(yvar,probs=0.9, na.rm=TRUE),
+            percent10 = quantile(yvar,probs=0.1, na.rm=TRUE)) %>%
+  ungroup()  
+fig <- ggplot(sample_sum %>%
+              gather(stat, yvar, mean, percent10:percent90), 
+            aes(x = xvar, y = yvar)) +
+  labs(title = "Weekly Death by Different Modes of School Openings", 
+       x = "Date",
+       y = "Weekly Death Per 1000") +
+#  geom_line(aes(color = group, linetype = stat) ,size=1) + 
+  geom_line(aes(color = group,linetype = stat) ,size=1.5) +   
+  scale_linetype(labels = c("Mean", "10 %", "90 %")) +
+    xlim(c(as.Date(startdate), max(df$date))) +
+  scale_color_discrete(breaks=c("In-person","Hybrid","Remote")) + thm
+figdev(sprintf("%s/tex/tables_and_figures/schoolmode-weekdeath.pdf", rootdir), width=8, height=6)
+print(fig)
+dev.off() 
+fig <- ggplot(sample_sum %>%
+              gather(stat, yvar, mean), 
+            aes(x = xvar, y = yvar)) +
+  labs(#title = "Weekly Cases by Different Modes of School Openings", 
+       x = "Date",
+       y = "Weekly Death Per 1000") +
+  geom_line(aes(color = group) ,size=2.5)+  
+    xlim(c(as.Date(startdate), as.Date(enddate))) +
+  scale_color_discrete(breaks=c("In-person","Hybrid","Remote")) + thm
+figdev(sprintf("%s/tex/tables_and_figures/schoolmode-weekdeath-simple.pdf", rootdir), width=8, height=6)
+print(fig)
+dev.off()
+             
+
+print(fig)
+ 
+
+
+## Death by K-12 visits 
+startdate  <- "2020-09-01" 
+df$school_visits_ma <- panelma(df$school_visits, df$fips, df$date, len=30)  
+sdf <- subset(df, df$date>=as.Date(startdate)) 
+sdf <- subset(sdf, sdf$school_visits_ma>0.01)  
+q <- quantile(sdf$school,probs=c(0.1,0.5,0.9),na.rm=TRUE) 
+print(q)
+df$sc_dum <- NULL 
+df$sc_dum[(df$sc_l==1)] <- "Low"
+df$sc_dum[(df$sc_m==1)] <- "Medium"
+df$sc_dum[(df$sc_h==1)] <- "High"  
+df$sc_dum <- panellag(df$sc_dum, df$fips, df$date, L)  
+sdf <- subset(df, df$date>=as.Date(startdate)) 
+sdf <- subset(sdf, (!is.na(sdf$sc_dum)) )  
+
+sdf$pschool_factor <- as.factor(sdf$sc_dum)
+sdf$pschool_factor <- relevel(sdf$pschool_factor, "Medium")
+sdf$pschool_factor <- relevel(sdf$pschool_factor, "High") 
+sdf$ddeath_capita <- 1000*sdf$ddeath/sdf$PopulationEstimate2018 
+sdf$xvar <- sdf$date
+sdf$yvar <- sdf$ddeath_capita
+sdf$group <- sdf$pschool_factor  
+startdate  <- "2020-09-14" 
+sample_sum <- sdf %>%
+  group_by(xvar, group) %>%
+  summarize(mean = mean(yvar, na.rm = TRUE),
+            sd   = sd(yvar, na.rm = TRUE),
+            percent90 = quantile(yvar,probs=0.9, na.rm=TRUE),
+            percent10 = quantile(yvar,probs=0.1, na.rm=TRUE)) %>%
+  ungroup() 
+ 
+fig <- ggplot(sample_sum %>%
+              gather(stat, yvar, mean, percent10:percent90), 
+            aes(x = xvar, y = yvar)) +
+  labs(title = "Weekly Deaths by Visits to K-12 Schools",
+       # subtitle =  ,
+       #caption =  ,
+       x = "Date",
+       y = "Weekly Deaths Per Capita") +
+  geom_line(aes(color = group, linetype = stat) ,size=2.5)
+fig <-  fig +     
+    xlim(c(as.Date(startdate), max(df$date))) +
+  scale_linetype(labels = c("Mean", "10 %", "90 %")) +
+  scale_color_discrete(breaks=c("High","Medium","Low")) + thm
+figdev(sprintf("%s/tex/tables_and_figures/school-weekdeath.pdf", rootdir), width=8, height=6)
+print(fig)
+dev.off()
+             
+print(fig)
+
+fig <- ggplot(sample_sum %>%
+              gather(stat, yvar, mean), 
+            aes(x = xvar, y = yvar)) +
+  labs(#title = "Weekly Cases by Visits to K-12 Schools",
+       # subtitle =  ,
+       #caption =  ,
+       x = "Date",
+       y = "Weekly Deaths Per 1000") +
+  geom_line(aes(color = group) ,size=2.5)
+fig <-  fig +     
+    xlim(c(as.Date(startdate), max(df$date))) +
+  scale_color_discrete(breaks=c("High","Medium","Low")) + thm
+figdev(sprintf("%s/tex/tables_and_figures/school-weekdeath-simple.pdf", rootdir), width=8, height=6)
+print(fig)
+dev.off()
+             
+print(fig)
+
+sample_sum <- subset(sdf,sdf$trump>0.5)  %>%
+  group_by(xvar, group) %>%
+  summarize(mean = mean(yvar, na.rm = TRUE),
+            sd   = sd(yvar, na.rm = TRUE),
+            percent90 = quantile(yvar,probs=0.9, na.rm=TRUE),
+            percent10 = quantile(yvar,probs=0.1, na.rm=TRUE)) %>%
+  ungroup()   
+fig <- ggplot(sample_sum %>%
+              gather(stat, yvar, mean), 
+            aes(x = xvar, y = yvar)) +
+  labs(#title = "Weekly Cases by Visits to K-12 Schools",
+       # subtitle =  ,
+       #caption =  ,
+       x = "Date",
+       y = "Weekly Deaths Per 1000") +
+  geom_line(aes(color = group) ,size=2.5)
+fig <-  fig +     
+    xlim(c(as.Date(startdate), max(df$date))) +
+  scale_color_discrete(breaks=c("High","Medium","Low")) + thm
+figdev(sprintf("%s/tex/tables_and_figures/school-weekdeath-trump-simple.pdf", rootdir), width=8, height=6)
+print(fig)
+dev.off()
+             
+print(fig)
+sample_sum <- subset(sdf,sdf$trump<=0.5) %>%
+  group_by(xvar, group) %>%
+  summarize(mean = mean(yvar, na.rm = TRUE),
+            sd   = sd(yvar, na.rm = TRUE),
+            percent90 = quantile(yvar,probs=0.9, na.rm=TRUE),
+            percent10 = quantile(yvar,probs=0.1, na.rm=TRUE)) %>%
+  ungroup()   
+fig <- ggplot(sample_sum %>%
+              gather(stat, yvar, mean), 
+            aes(x = xvar, y = yvar)) +
+  labs(#title = "Weekly Cases by Visits to K-12 Schools",
+       # subtitle =  ,
+       #caption =  ,
+       x = "Date",
+       y = "Weekly Deaths Per 1000") +
+  geom_line(aes(color = group) ,size=2.5)
+fig <-  fig +     
+    xlim(c(as.Date(startdate), max(df$date))) +
+  scale_color_discrete(breaks=c("High","Medium","Low")) + thm
+figdev(sprintf("%s/tex/tables_and_figures/school-weekdeath-notrump-simple.pdf", rootdir), width=8, height=6)
+print(fig)
+dev.off()
+             
+print(fig)
+
+
+## College visits
+L <- 0
+df$college_visits_ma <- panelma(df$college_visits, df$fips, df$date, len=30) 
+startdate  <- "2020-08-15" 
+sdf <- subset(df, df$date>=as.Date(startdate)) 
+sdf <- subset(sdf, sdf$college_visits_ma>0.01)  
+q <- quantile(sdf$college,probs=c(0.1,0.5,0.9),na.rm=TRUE) 
+print(q) 
+df$cl_dum <- NULL   
+df$cl_dum[(df$cl_l==1)] <- "Low"
+df$cl_dum[(df$cl_m==1)] <- "Medium"
+df$cl_dum[(df$cl_h==1)] <- "High"  
+df$cl_dum <- panellag(df$cl_dum, df$fips, df$date, L)   
+sdf <- subset(df, df$date>=as.Date(startdate)) 
+sdf <- subset(sdf, sdf$college_visits_ma>0)    
+sdf <- subset(sdf, (!is.na(sdf$cl_dum)) ) 
+sdf$pschool_factor <- as.factor(sdf$cl_dum)
+sdf$pschool_factor <- relevel(sdf$pschool_factor, "Medium")
+sdf$pschool_factor <- relevel(sdf$pschool_factor, "High") 
+sdf$dcases_capita <- 1000*sdf$dcases/sdf$PopulationEstimate2018 
+sdf$xvar <- sdf$date
+sdf$yvar <- sdf$dcases_capita
+sdf$group <- sdf$pschool_factor 
+sample_sum <- sdf %>%
+  group_by(xvar, group) %>%
+  summarize(mean = mean(yvar, na.rm = TRUE),
+            sd   = sd(yvar, na.rm = TRUE),
+            percent90 = quantile(yvar,probs=0.9, na.rm=TRUE),
+            percent10 = quantile(yvar,probs=0.1, na.rm=TRUE)) %>%
+  ungroup()  
+fig <- ggplot(sample_sum %>%
+              gather(stat, yvar, mean, percent10:percent90), 
+            aes(x = xvar, y = yvar)) +
+  labs(title = "Average Weekly Cases by Visits to Colleges", 
+       x = "Date",
+       y = "Weekly Cases Per Capita") +
+  geom_line(aes(color = group, linetype = stat) ,size=2.5)
+fig <-  fig +    
+  scale_linetype(labels = c("Mean", "10 %", "90 %")) +
+  scale_color_discrete(breaks=c("High","Medium","Low")) + thm
+figdev(sprintf("%s/tex/tables_and_figures/college-weekcase-2.pdf", rootdir), width=8, height=6)
+print(fig)
+dev.off()
+             
+print(fig)
+
+fig <- ggplot(sample_sum %>%
+              gather(stat, yvar, mean), 
+            aes(x = xvar, y = yvar)) +
+  labs(x = "Date",
+       y = "Weekly Cases Per 1000") +
+  geom_line(aes(color = group) ,size=2.5)
+fig <-  fig +    
+  scale_color_discrete(breaks=c("High","Medium","Low")) + thm
+figdev(sprintf("%s/tex/tables_and_figures/college-weekcase-simple-2.pdf", rootdir), width=8, height=6)
+print(fig)
+dev.off()
+             
+print(fig)
+　
+# College and death
+L <- 14
+df$cl_dum <- NULL   
+df$cl_dum[(df$cl_l==1)] <- "Low"
+df$cl_dum[(df$cl_m==1)] <- "Medium"
+df$cl_dum[(df$cl_h==1)] <- "High"  
+df$cl_dum <- panellag(df$cl_dum, df$fips, df$date, L)   
+sdf <- subset(df, df$date>=as.Date(startdate)) 
+sdf <- subset(sdf, sdf$college_visits_ma>0.01)    
+sdf <- subset(sdf, (!is.na(sdf$cl_dum)) ) 
+sdf$pschool_factor <- as.factor(sdf$cl_dum)
+sdf$pschool_factor <- relevel(sdf$pschool_factor, "Medium")
+sdf$pschool_factor <- relevel(sdf$pschool_factor, "High") 
+sdf$ddeath_capita <- 1000*sdf$ddeath/sdf$PopulationEstimate2018 
+sdf$xvar <- sdf$date
+sdf$yvar <- sdf$ddeath_capita
+sdf$group <- sdf$pschool_factor 
+sample_sum <- sdf %>%
+  group_by(xvar, group) %>%
+  summarize(mean = mean(yvar, na.rm = TRUE),
+            sd   = sd(yvar, na.rm = TRUE),
+            percent90 = quantile(yvar,probs=0.9, na.rm=TRUE),
+            percent10 = quantile(yvar,probs=0.1, na.rm=TRUE)) %>%
+  ungroup() 
+ 
+fig <- ggplot(sample_sum %>%
+              gather(stat, yvar, mean, percent10:percent90), 
+            aes(x = xvar, y = yvar)) +
+  labs(title = "Weekly Deaths by Visits to Colleges", 
+       x = "Date",
+       y = "Weekly Deaths Per Capita") +
+  geom_line(aes(color = group, linetype = stat) ,size=2.5)
+fig <-  fig +    
+    xlim(c(as.Date("2020-09-07"), max(df$date))) +
+  scale_linetype(labels = c("Mean", "10 %", "90 %")) +
+  scale_color_discrete(breaks=c("High","Medium","Low")) + thm
+figdev(sprintf("%s/tex/tables_and_figures/college-weekdeath-2.pdf", rootdir), width=8, height=6)
+print(fig)
+dev.off()
+             
+print(fig)
+
+fig <- ggplot(sample_sum %>%
+              gather(stat, yvar, mean), 
+            aes(x = xvar, y = yvar)) +
+  labs( x = "Date",
+       y = "Weekly Deaths Per 1000") +
+  geom_line(aes(color = group) ,size=2.5)
+fig <-  fig +    
+    xlim(c(as.Date("2020-09-02"), max(sdf$date))) +
+  scale_color_discrete(breaks=c("High","Medium","Low")) + thm
+figdev(sprintf("%s/tex/tables_and_figures/college-weekdeath-simple-2.pdf", rootdir), width=8, height=6)
+print(fig)
+dev.off()
+             
+print(fig)
+
+
+
+ 
+
+
+```
+
+```{r figures, eval = FALSE, cache=FALSE, warning=FALSE, results='asis'}
+   
+library(tidyverse)
+
+df$pschool_dum <- NULL 
+df$pschool_dum[df$pschoolremote>0.1] <- "Remote"
+df$pschool_dum[df$pschoolhybrid>0.1] <- "Hybrid"
+df$pschool_dum[df$pschoolfull>0.1] <- "Full in-person"
+ 
+startdate  <- "2020-09-10" 
+sdf <- subset(df, df$date>=as.Date(startdate))
+
+sdf <- subset(sdf, (!is.na(sdf$pschool_dum)) )
+
+#sdf <- subset(sdf, (!is.na(sdf$school_dum)) )
+
+
+sdf$dcases_capita <- sdf$dcases/sdf$PopulationEstimate2018
+
+  
+sdf$xvar <- sdf$date
+sdf$yvar <- sdf$dcases_capita
+sdf$group <- as.factor(sdf$pschool_dum)
+ 
+sample_sum <- sdf %>%
+  group_by(xvar, group) %>%
+  summarize(mean = mean(yvar, na.rm = TRUE),
+            sd   = sd(yvar, na.rm = TRUE),
+            percent90 = quantile(yvar,probs=0.9, na.rm=TRUE),
+            percent10 = quantile(yvar,probs=0.1, na.rm=TRUE)) %>%
+  ungroup() 
+ 
+p <- ggplot(sample_sum %>%
+              gather(stat, yvar, mean, percent10:percent90), 
+            aes(x = xvar, y = yvar)) +
+  labs(title = "Weekly Cases Per Capita and the Modes of School Opening",
+       # subtitle = "Data from September 20 and December 4",
+       #caption = "Source: EPA (http://fueleconomy.gov)",
+       x = "Date",
+       y = "Weekly Cases Per Capita") +
+  geom_line(aes(color = group, linetype = stat) )
+p
+            
+            
+print(p)
+
+
+startdate  <- "2020-08-15" 
+sdf <- subset(df, df$date>=as.Date(startdate))
+
+df$college_dum <- NULL
+df$college_dum[df$college<0.001] <- "low college visits"
+df$college_dum[df$college>0.001] <- "high college visits" 
+df$college_dum <- panellag(df$college_dum, df$fips, df$date, L) 
+
+sdf <- subset(sdf, (!is.na(sdf$college_dum)) ) 
+sdf$dcases_capita <- sdf$dcases/sdf$PopulationEstimate2018 
+sdf$xvar <- sdf$date
+sdf$yvar <- sdf$dcases_capita
+sdf$group <- as.factor(sdf$college_dum) 
+sample_sum <- sdf %>%
+  group_by(xvar, group) %>%
+  summarize(mean = mean(yvar, na.rm = TRUE),
+            sd   = sd(yvar, na.rm = TRUE),
+            percent90 = quantile(yvar,probs=0.9, na.rm=TRUE),
+            percent10 = quantile(yvar,probs=0.1, na.rm=TRUE)) %>%
+  ungroup()  
+p <- ggplot(sample_sum %>%
+              gather(stat, yvar, mean, percent10:percent90), 
+            aes(x = xvar, y = yvar)) +
+  labs(title = "Weekly Cases Per Capita and College Visits",
+       # subtitle = "Data from September 20 and December 4",
+       #caption = "Source: EPA (http://fueleconomy.gov)",
+       x = "Date",
+       y = "Weekly Cases Per Capita") +
+  geom_line(aes(color = group, linetype = stat) )
+p
+         
+
+ 
+
+summarize(mean = mean(sdf$college, na.rm = TRUE)) 
+mean(sdf$school, na.rm = TRUE)
+
+
+df$pgather <- df$pgather50
+  newnames <- c("college","school")#,"pgather") #,"bar","restaurant")
+  idx <- sapply(newnames,function(x) grep(paste(x,"_visits",sep=""), names(df)))  
+  for(v in newnames) {
+    df[,paste(v,"_m",sep="")] <- panelma(df[,idx[v]]/df$devices_residing, df$fips, df$date, len=60)
+  }
+    newnames <- c("pmask","pgather","pschoolfull","pschoolhybrid","pschoolremote") #,"bar","restaurant") 
+  for(v in newnames) {
+    df[,paste(v,"_m",sep="")] <- panelma(df[,v], df$fips, df$date, len=60)
+  }
+  
+  df$dcases <- paneldiff(df$cases,df$fips, df$date, lag=60)
+  df$dcases_pc <- (df$dcases+1)/df$PopulationEstimate2018
+  df$logdc_pc <- log(df$dcases_pc) 
+  
+  newnames <- c("dlogdc","dlogdd")
+  for(v in newnames) {
+    df[,paste(v,"_m",sep="")] <- panelma(df[,v], df$fips, df$date, len=60)
+  }
+    
+  newnames <- c("college_m","school_m","pmask_m","pgather_m","dlogdc_m","dlogdd_m")
+  for(v in newnames) {
+    df[,paste("d",v,sep="")] <- paneldiff(df[,v], df$fips, df$date, 60)
+  }
+  newnames <- c("dcollege_m","dschool_m","college_m","school_m","pmask_m","pgather_m","dlogdc_m","dlogdd_m")
+    for(v in newnames) {
+    df[,paste(v,"_lag",sep="")] <- panellag(df[,v], df$fips, df$date, 14)
+    } 
+   df$logdc_pc_lag60 <- panellag(df$logdc_pc, df$fips, df$date, 60)
+  
+   
+sdf <- subset(df, df$date==as.Date("2020-11-15"))   
+ 
+fivenum(sdf$school_m_lag)
+fivenum(sdf$college_m_lag)
+fivenum(sdf$pmask_m_lag)
+fivenum(sdf$pgather_m_lag)
+fivenum(sdf$dcases_pc)
+fivenum(sdf$logdc_pc)
+
+sdf$school_dum <- 0
+median(sdf$school_m_lag, na.rm = TRUE)
+ 
+  
+# devtools::install_github("wilkelab/cowplot")
+# install.packages("ggpmisc")
+library(ggplot2)
+library(ggpubr)
+theme_set(
+  theme_minimal() +
+    theme(legend.position = "top")
+  ) 
+#head(sdf[, c("ddlogdc_m", "ddlogdd_m", "dcollege_m_lag", "dschool_m_lag")], 50)
+   
+
+library(ggplot2)
+# Basic scatter plot
+sdf$school_m_lag <- as.vector(sdf$school_m_lag)
+sdf$logdc_pc <- as.vector(sdf$logdc_pc)
+ggplot(sdf, aes(x=school_m_lag, y=logdc_pc)) + geom_point()    +
+    labs(
+        x = "# of visits to K-12 schools / # of devices from Aug 15 to Oct 15",
+        y = "log(per capita cumulative cases from Sept 15 to Nov 15)",
+        color = "Gear",
+        title = "Per capita cumulative cases and K-12 school opening across the US counties" 
+    ) 
+
+ggplot(sdf, aes(x=college_m_lag, y=logdc_pc)) + geom_point()   +
+    labs(
+        x = "# of visits to colleges / # of devices from Aug 15 to Oct 15",
+        y = "log(per capita cumulative cases from Sept 15 to Nov 15)",
+        color = "Gear",
+        title = "Per capita cumulative cases and college opening across the US counties" 
+    ) 
+
+ggplot(sdf, aes(x=pmask_m_lag, y=logdc_pc)) + geom_point()   +
+    labs(
+        x = "Mask mandates",
+        y = "log(per capita cumulative cases from Sept 15 to Nov 15)",
+        color = "Gear",
+        title = "Per capita cumulative cases and mask mandates across the US counties" 
+    ) 
+
+ggplot(sdf, aes(x=pgather_m_lag, y=logdc_pc)) + geom_point()   +
+    labs(
+        x = "No group gathering of more than 50 persons",
+        y = "log(per capita cumulative cases from Sept 15 to Nov 15)",
+        color = "Gear",
+        title = "Per capita cumulative cases and prohibition on group gathering across the US counties" 
+    ) 
+
+ 
+ggplot(sdf, aes(x=logdc_pc_lag60, y=logdc_pc)) + geom_point()   +
+    labs(
+        x = "log(per capita cumulative cases from July 15 to Sept 15)",
+        y = "log(per capita cumulative cases from Sept 15 to Nov 15)",
+        color = "Gear",
+        title = "Correlation of per capita cumulative cases over four-months across the US counties" 
+    ) 
+
+ggplot(sdf, aes(x=pschoolfull_m, y=school_m)) + geom_point()   +
+    labs(
+        x = "school opening in full from  Sept 15 to Nov 15",
+        y = "# of visits to schools / # of devices from Sept 15 to Nov 15",
+        color = "Gear",
+        title = "School opening in full and the number of visits to school across the US counties" 
+    ) 
+
+
+ggplot(sdf, aes(x=pschoolhybrid_m, y=school_m)) + geom_point()   +
+    labs(
+        x = "school opening in hybrid from  Sept 15 to Nov 15",
+        y = "# of visits to schools / # of devices from Sept 15 to Nov 15",
+        color = "Gear",
+        title = "School opening in hybrid mode and the number of visits to school across the US counties" 
+    ) 
+
+
+ggplot(sdf, aes(x=pschoolremote_m, y=school_m)) + geom_point()   +
+    labs(
+        x = "school opening in remote from  Sept 15 to Nov 15",
+        y = "# of visits to schools / # of devices from Sept 15 to Nov 15",
+        color = "Gear",
+        title = "School opening in remote mode and the number of visits to school across the US counties" 
+    ) 
+
+# sdf$school_dum <- as.factor(ifelse(sdf$school_m_lag >median(sdf$school_m_lag, na.rm = TRUE) , 0, 1))
+# sdf$college_dum <- as.factor(ifelse(sdf$college_m_lag >median(sdf$college_m_lag, na.rm = TRUE) , 0, 1))
+# 
+# geom_boxplot(outlier.colour="black", outlier.shape=16,
+#              outlier.size=2, notch=FALSE)
+# 
+# p <- ggplot(data = sdf) + 
+#   geom_boxplot(aes(x=school_dum, y=logdc_pc))  
+# p
+# p <- ggplot(sdf, aes(x=college_dum, y=logdc_pc)) + 
+#   geom_boxplot()
+# p 
+
+ 
+# # residual two-way plot  
+# sdf$school_m_lag <- as.vector(sdf$school_m_lag)
+# sdf$logdc_pc <- as.vector(sdf$logdc_pc)
+#  yhat <- predict(lm(logdc_pc~factor(state), data=sdf)) 
+#  xhat <- predict(lm(school_m_lag~factor(state), data=sdf))
+#  sdf$res_y <- sdf$logdc_pc - yhat
+#  sdf$res_x <- sdf$school_m_lag - xhat 
+# ggplot(sdf, aes(x=res_x, y=res_y)) + geom_point()  
+
+
+ 
+
+```
+
+```{r, results='asis', echo=FALSE}
+if (!knitr::is_latex_output()) {
+  cat("
+[![](https://i.creativecommons.org/l/by-sa/4.0/88x31.png)](http://creativecommons.org/licenses/by-sa/4.0/)
+
+This work is licensed under a [Creative Commons Attribution-ShareAlike
+4.0 International License](http://creativecommons.org/licenses/by-sa/4.0/)
+") }
+```
