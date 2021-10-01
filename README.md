@@ -12,6 +12,6 @@ Preprint available at:
 - [medrxiv](https://www.medrxiv.org/content/10.1101/2021.02.20.21252131v2)
 
 
-
+For more information about the data see `rmd/data.Rmd`
 
 
