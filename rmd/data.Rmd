@@ -24,9 +24,75 @@ output      :
 
 - Daily cases and deaths from NYT
 - County mask mandates from [Wright, Chawla, Chen, & Farmer](https://www.austinlwright.com/covid-research) [@wright2020]
-- Information on other policies from [Yu group](https://github.com/Yu-Group/covid19-severity-prediction)  ([@altieri2020]).
-- School district reopening from [edweek](https://www.edweek.org/ew/section/multimedia/school-districts-reopening-plans-a-snapshot.html)
-- Matching between school districts and counties from [census](https://www2.census.gov/programs-surveys/saipe/guidance-geographies/districts-counties/sdlist-19.xls)
+- Matching between school districts and counties from
+  [census](https://www2.census.gov/programs-surveys/saipe/guidance-geographies/districts-counties/sdlist-20.xls)
+- School district reopening from [MCH](https://www.mchdata.com) `data/covid-school-data.xlsx`
+ 
+- Daily visits to various types of locations in each county from
+  Safegraph. Processed county level data in `data/sg-county.Rda`. This
+  was created by the `R/sg*.R` files. Access to the original Safegraph
+  data requires permission from Safegraph.
+  
+- County characteristics from the [Yu
+  group](https://github.com/Yu-Group/covid19-severity-prediction)
+  . This also has information on NPIs, but we use the @killeen2020 NPI
+  data since it was updated more recently.
+```raw
+@article{altieri2020Curating,
+  journal = {Harvard Data Science Review},
+  doi = {10.1162/99608f92.1d4e0dae},
+  note = {https://hdsr.mitpress.mit.edu/pub/p6isyf0g},
+  title = {Curating a COVID-19 Data Repository and Forecasting County-Level DeathCounts in the United States},
+  url = {https://hdsr.mitpress.mit.edu/pub/p6isyf0g},
+  author = {Altieri, Nick and Barter, Rebecca L and Duncan, James and Dwivedi, Raaz and Kumbier, Karl and Li, Xiao and Netzorg, Robert and Park, Briton and Singh, Chandan and Tan, Yan Shuo and Tang, Tiffany and Wang, Yu and Zhang, Chao and Yu, Bin},
+  date = {2020-11-03},
+  year = {2020},
+  month = {11},
+  day = {3},
+}
+```
+
+- Information on county NPIs from  @killeen2020 accessed from
+  [github](https://github.com/JieYingWu/COVID-19_US_County-level_Summaries/) 
+
+```raw
+@article{killeen2020,
+  title = {A {{County}}-Level {{Dataset}} for {{Informing}} the {{United States}}' {{Response}} to {{COVID}}-19},
+  author = {Killeen, Benjamin D. and Wu, Jie Ying and Shah, Kinjal and Zapaishchykova, Anna and Nikutta, Philipp and Tamhane, Aniruddha and Chakraborty, Shreya and Wei, Jinchi and Gao, Tiger and Thies, Mareike and Unberath, Mathias},
+  year = {2020},
+  month = apr,
+  archivePrefix = {arXiv},
+  eprint = {1909.11730},
+  eprinttype = {arxiv}
+}
+```
+  
+## Alternative Sources 
+
+The repository and code also contains data from the following sources,
+but these are not used in the paper.
+
+- Alternate school district reopening from
+  [edweek](https://www.edweek.org/ew/section/multimedia/school-districts-reopening-plans-a-snapshot.html) 
+  in `data/District_Reopening_Data.xlsx` and `data/Map_-_Coronavirus_and_School_Closures.xlsx`
+  
+-  Alternative data source for
+  county-level information `data/EDGE_GEOCODE_PUBLICLEA_1819.xlsx`
+
+- CDC Covid Cases restricted detailed data (There is code related to
+  this, but the data files are not included.)
+
+- Mask wearing data from NYT `data/mask-use-by-county.csv` from `https://raw.githubusercontent.com/nytimes/covid-19-data/master/mask-use/mask-use-by-county.csv`
+
+- Hospitalizations from  ["COVID-19 Reported Patient Impact and Hospital Capacity by
+Facility"](https://beta.healthdata.gov/Hospital/COVID-19-Reported-Patient-Impact-and-Hospital-Capa/anag-cw7u)
+ saved as `data/hospital.csv` 
+
+- County FIPS codes and Zip codes `data/ZIP_COUNTY_122020.xlsx` WHERE
+  IS THIS FROM?
+
+- Presidential vote shares 2000-2016 `data/countypres_2000-2016.csv` from?
+    
 
 
 # Code
@@ -34,3 +100,17 @@ output      :
 - `R/countyData.R` downloads and merges the data sources above
 - `R/dataprep.R` does some additional variable creation and cleaning
   in preparation for analysis
+- `R/hospitalData.R` downloads and cleans data on hospitalizations
+  (not used in the paper)
+- Safegraph data preparation
+  - `R/sg-extractcategories.R` downloads weekly panel data from
+    Safegraph's AWS bucket. It then picks out POIs in categories of
+    interest and merges the data for the POIs across weeks.
+  - `R/sg-tocounty.R` takes the output from `sg-extractcategories.R`
+    and aggregates from POI visits to county visits
+  - `R/sg-homepanel.R` loads home panel files, rbind them, and
+    aggregate from CBG to county
+  - `R/sg-socialdistancing.R` downloads and merges Safegraph social
+    distancing metrics     
+- `R/utils.R` various utility functions used elsewhere
+

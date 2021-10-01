@@ -22,7 +22,7 @@ countyData <- function(redo=FALSE) {
   nyt  <- read.csv("https://raw.githubusercontent.com/nytimes/covid-19-data/master/us-counties.csv", stringsAsFactors=FALSE)
   nyt$date <- as.Date(nyt$date)
   nyt <- subset(nyt, !is.na(fips))
-  
+
   ################################################################################
   ## County Mask Mandate info from Wright, Chawla, Chen, & Farmer
   library(readxl)
@@ -178,8 +178,8 @@ countyData <- function(redo=FALSE) {
 
   # link between school districts and counties from census
   url <-
-    "https://www2.census.gov/programs-surveys/saipe/guidance-geographies/districts-counties/sdlist-19.xls"
-  file <- "sdlist-19.xls"
+    "https://www2.census.gov/programs-surveys/saipe/guidance-geographies/districts-counties/sdlist-20.xls"
+  file <- "sdlist-20.xls"
   if (!(file.exists(file))) {
     download.file(url, destfile=file)
   } else {
